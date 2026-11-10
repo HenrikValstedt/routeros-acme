@@ -34,8 +34,9 @@ type app struct {
 	mgr          *Manager
 	dataDir      string
 	sessions     *sessionStore
-	throttle     *throttle // logins, setup, invite/reset tokens
-	mailThrottle *throttle // "forgot password" e-mails
+	throttle     *throttle      // logins, setup, invite/reset tokens
+	ceremonies   *ceremonyStore // passkey sign-in/registration in progress
+	mailThrottle *throttle      // "forgot password" e-mails
 
 	setupCode string // one-time code for first-run admin creation (empty once users exist)
 
@@ -93,7 +94,7 @@ func main() {
 		log.Fatalf("secret key: %v", err)
 	}
 	a := &app{store: store, mgr: NewManager(store, dataDir), dataDir: dataDir,
-		sessions: &sessionStore{m: map[string]session{}}}
+		sessions: &sessionStore{m: map[string]session{}}, ceremonies: &ceremonyStore{m: map[string]ceremony{}}}
 	a.throttle, a.mailThrottle = newThrottle(), newThrottle()
 	a.mgr.sealer = sl
 	if n, err := store.SealSecrets(sl); err != nil {
@@ -177,13 +178,14 @@ func resetUser2FA(dataDir, username string) int {
 			return fmt.Errorf("no user %q (users: %s)", username, strings.Join(names, ", "))
 		}
 		u.TOTPSecret, u.TOTPPending, u.TOTPLastStep, u.Recovery = "", "", 0, nil
+		clearPasskeys(u)
 		return nil
 	})
 	if err != nil {
 		log.Print(err)
 		return 1
 	}
-	log.Printf("two-factor authentication for %q is off; it must be set up again at the next sign-in", username)
+	log.Printf("two-factor authentication and passkeys for %q are off; 2FA must be set up again at the next sign-in", username)
 	return 0
 }
 
@@ -215,6 +217,8 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/setup", a.postSetup)
 	mux.HandleFunc("POST /api/login", a.postLogin)
 	mux.HandleFunc("POST /api/login/otp", a.postLoginOTP)
+	mux.HandleFunc("POST /api/passkey/login/begin", a.passkeyLoginBegin)
+	mux.HandleFunc("POST /api/passkey/login/finish", a.passkeyLoginFinish)
 	mux.HandleFunc("POST /api/invite/check", a.checkInvite)
 	mux.HandleFunc("POST /api/invite/accept", a.acceptInvite)
 	mux.HandleFunc("POST /api/forgot", a.forgotPassword)
@@ -229,6 +233,12 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/me/2fa/verify", a.need("", a.verify2FA))
 	mux.HandleFunc("POST /api/me/2fa/recovery", a.need("", a.stepUp(a.newRecovery)))
 	mux.HandleFunc("POST /api/me/2fa/disable", a.need("", a.disable2FA))
+	// passkeys: adding or removing one is a sensitive action (a new way into the account)
+	mux.HandleFunc("POST /api/me/passkeys/begin", a.need("", a.stepUp(a.passkeyRegisterBegin)))
+	mux.HandleFunc("POST /api/me/passkeys/finish", a.need("", a.passkeyRegisterFinish))
+	mux.HandleFunc("DELETE /api/me/passkeys/{id}", a.need("", a.stepUp(a.passkeyDelete)))
+	mux.HandleFunc("POST /api/me/2fa/passkey/begin", a.need("", a.passkeyConfirmBegin))
+	mux.HandleFunc("POST /api/me/2fa/passkey/finish", a.need("", a.passkeyConfirmFinish))
 	mux.HandleFunc("PUT /api/me", a.need("", a.putMe))
 	mux.HandleFunc("GET /api/state", a.need("", a.getState))
 	mux.HandleFunc("GET /api/logs", a.need("", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, a.mgr.Logs()) }))
@@ -353,6 +363,7 @@ func (a *app) getState(w http.ResponseWriter, r *http.Request) {
 		"settings": sv, "certs": cfg.Certs, "routers": routers, "mail": mailViewOf(cfg.Mail),
 		"dnsAccounts": dnsViews(cfg), "dnsRoutes": certRoutes(cfg),
 		"busy": a.mgr.Busy(), "now": time.Now(), "me": viewOf(currentUser(r)), "version": version,
+		"myPasskeys": passkeyViews(currentUser(r)),
 	})
 }
 

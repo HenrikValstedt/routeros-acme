@@ -234,7 +234,22 @@ password alone isn't enough.
   docker compose start
   ```
 - The 2FA secret is stored encrypted (like router secrets), and recovery codes only as hashes.
-- Passkeys (Face ID, Windows Hello, security keys) are planned as an additional option.
+
+### Passkeys (optional)
+
+On top of the code, every user can add **passkeys** (Face ID, Touch ID, a fingerprint, Windows Hello, a phone or a
+security key) under *My account → Passkeys*.
+
+- **Sign in with a passkey** replaces password *and* code: one tap plus Face ID or a fingerprint. Passkeys always
+  require that check on the device, and they're phishing-proof, because they only work on the real site address.
+- **"Confirm it's you"** accepts a passkey instead of a code.
+- **The code stays the foundation and the fallback.** A passkey can only be added while 2FA is on. Adding or removing
+  one needs a fresh code or passkey. Turning 2FA off, an admin's *Reset 2FA* and `-reset-2fa` also remove passkeys.
+- **Passkeys need HTTPS and a host name,** for example `https://certs.example.com` through a reverse proxy (see below).
+  They don't work on `http://192.168.x.x:8080`; the UI explains this, and password plus code works there as always. A
+  passkey belongs to the address it was created on, so if the address changes, add the passkeys again.
+- The reverse proxy must pass the original host name on (`Host` header). Caddy, Traefik and Nginx Proxy Manager do this
+  by default; for plain nginx use `proxy_set_header Host $host;` as in the example below.
 
 ## Device enrollment
 

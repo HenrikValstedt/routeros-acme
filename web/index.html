@@ -197,6 +197,11 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
   padding:14px 16px;margin:12px 0;font-size:14.5px;letter-spacing:.04em}
 .badge.on{color:var(--ok);background:var(--ok-bg)}.badge.off{color:var(--warn);background:var(--warn-bg)}
 .mfabox{display:grid;gap:10px}.mfabox .row{margin:0}
+.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12.5px;margin:16px 0 12px}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.pklist{display:grid;gap:6px}.pkrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.pkrow b{font-size:14px}.pkrow .sub{margin:0}
 
 /* ---- phones ---- */
 @media (max-width:760px){
@@ -272,6 +277,7 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5M12 18h.01"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M16 7l3 3M14 9l2 2"/></symbol>
   <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></symbol>
 </svg>
 
@@ -297,6 +303,10 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
     <label>Password</label><input type="password" name="password" autocomplete="current-password" required>
     <div class="err-box"></div>
     <div class="foot" style="justify-content:space-between"><a href="#" id="forgotLink" class="small" hidden>Forgot password?</a><button class="pri">Sign in</button></div>
+    <div id="pkLoginBox" hidden>
+      <div class="or"><span>or</span></div>
+      <button type="button" id="pkLogin" style="width:100%"><svg class="i"><use href="#i-key"/></svg>Sign in with a passkey</button>
+    </div>
   </form>
   <form class="card" id="forgotForm" hidden>
     <h2>Reset password</h2>
@@ -608,6 +618,7 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
   <label for="otpDlgCode">Code</label>
   <input type="text" id="otpDlgCode" name="code" class="otp-in" inputmode="numeric" autocomplete="one-time-code" maxlength="11">
   <div class="err-box"></div>
+  <button type="button" id="otpDlgPasskey" hidden style="width:100%;margin-top:12px"><svg class="i"><use href="#i-key"/></svg>Use a passkey instead</button>
   <div class="foot"><button type="button" id="otpDlgCancel">Cancel</button><button class="pri">Confirm</button></div>
 </form></dialog>
 
@@ -664,6 +675,7 @@ async function boot() {
   try {
     const s = await api('GET', '/api/session');
     resetEnabled = s.resetEnabled;
+    passkey = {...(s.passkey || {}), browser: !!(window.PublicKeyCredential && window.isSecureContext)};
     if (m && m[1] === 'reset') return showAuth('reset');
     if (m && m[1] === 'invite') {
       try {
@@ -686,6 +698,7 @@ function showAuth(mode = 'login') {
     otp: '#otpForm', mfa: '#mfaForm'};
   for (const [k, sel] of Object.entries(forms)) $(sel).hidden = k !== mode;
   $('#forgotLink').hidden = !resetEnabled;
+  $('#pkLoginBox').hidden = !(passkey.available && passkey.browser) || mode !== 'login';
   const f = $(forms[mode]);
   f.querySelector('.err-box').textContent = '';
   f.querySelector('input:not([type=hidden])')?.focus();
@@ -775,12 +788,18 @@ $('#recSaved').onchange = e => { $('#recDone').disabled = !e.target.checked; };
 recDlg.addEventListener('cancel', e => e.preventDefault()); // codes must be acknowledged
 
 // Code prompt. submit(code) must throw on a wrong code; resolves true when it succeeded.
-function askCode({title = "Confirm it's you", hint = 'This change needs a fresh code from your authenticator app.', submit}) {
+function askCode({title = "Confirm it's you", hint = 'This change needs a fresh code from your authenticator app.', submit, viaPasskey}) {
   return new Promise(resolve => {
     const f = $('#otpDlgForm'), eb = f.querySelector('.err-box');
     $('#otpDlgTitle').textContent = title; $('#otpDlgHint').textContent = hint;
     f.reset(); eb.textContent = '';
     const finish = ok => { otpDlg.close(); resolve(ok); };
+    const pk = $('#otpDlgPasskey');
+    pk.hidden = !viaPasskey;
+    pk.onclick = async () => {
+      eb.textContent = '';
+      try { await viaPasskey(); finish(true); } catch (err) { eb.textContent = err.message; }
+    };
     f.onsubmit = async e => {
       e.preventDefault(); eb.textContent = '';
       try { await submit(f.code.value); finish(true); }
@@ -791,7 +810,80 @@ function askCode({title = "Confirm it's you", hint = 'This change needs a fresh 
     otpDlg.showModal(); $('#otpDlgCode').focus();
   });
 }
-const askOTP = () => askCode({submit: code => api('POST', '/api/me/2fa/verify', {code}, true)});
+const hasPasskeyHere = () => passkey.available && passkey.browser && (S.myPasskeys || []).some(p => p.rpId === passkey.rpId);
+const askOTP = () => askCode({submit: code => api('POST', '/api/me/2fa/verify', {code}, true),
+  hint: hasPasskeyHere() ? 'This change needs a fresh code from your authenticator app, or your passkey.' : undefined,
+  viaPasskey: hasPasskeyHere() ? () => passkeyCeremony('get', '/api/me/2fa/passkey') : null});
+
+// ---------- passkeys (WebAuthn) ----------
+let passkey = {};
+const b64u = {
+  enc: buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  dec: s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0)),
+};
+function credToJSON(c) {
+  const r = c.response, out = {id: c.id, rawId: b64u.enc(c.rawId), type: c.type,
+    authenticatorAttachment: c.authenticatorAttachment || undefined,
+    clientExtensionResults: c.getClientExtensionResults ? c.getClientExtensionResults() : {},
+    response: {clientDataJSON: b64u.enc(r.clientDataJSON)}};
+  if (r.attestationObject) {
+    out.response.attestationObject = b64u.enc(r.attestationObject);
+    if (r.getTransports) out.response.transports = r.getTransports();
+  } else {
+    out.response.authenticatorData = b64u.enc(r.authenticatorData);
+    out.response.signature = b64u.enc(r.signature);
+    if (r.userHandle) out.response.userHandle = b64u.enc(r.userHandle);
+  }
+  return out;
+}
+// passkeyCeremony runs begin -> browser prompt -> finish. kind: 'create' (add) or 'get' (sign in / confirm).
+async function passkeyCeremony(kind, base, body) {
+  const b = await api('POST', base + '/begin', body);
+  const o = b.options.publicKey;
+  o.challenge = b64u.dec(o.challenge);
+  if (o.user) o.user.id = b64u.dec(o.user.id);
+  for (const c of [...(o.excludeCredentials || []), ...(o.allowCredentials || [])]) c.id = b64u.dec(c.id);
+  let cred;
+  try { cred = kind === 'create' ? await navigator.credentials.create({publicKey: o}) : await navigator.credentials.get({publicKey: o}); }
+  catch (e) {
+    if (e.name === 'NotAllowedError') throw new Error('Cancelled, or no passkey was chosen');
+    if (e.name === 'InvalidStateError') throw new Error('This device already has a passkey for your account');
+    throw new Error(e.message || 'The passkey prompt failed');
+  }
+  return api('POST', `${base}/finish?c=${encodeURIComponent(b.ceremony)}`, credToJSON(cred), true);
+}
+$('#pkLogin').onclick = async () => {
+  const eb = $('#loginForm .err-box'); eb.textContent = '';
+  try { await passkeyCeremony('get', '/api/passkey/login'); boot(); }
+  catch (e) { eb.textContent = e.message; }
+};
+function renderPasskeys(box) {
+  const list = S.myPasskeys || [];
+  const here = list.filter(p => p.rpId === passkey.rpId), elsewhere = list.length - here.length;
+  let html = `<div class="row" style="margin-top:6px"><b>Passkeys</b><span class="badge ${list.length ? 'on' : ''}">${list.length || 'None'}</span></div>`;
+  if (list.length) html += '<div class="pklist">' + list.map(p => `<div class="pkrow"><div><b>${esc(p.name)}</b>
+      <div class="sub">${esc(p.rpId)} · added ${date(p.created)}${hasT(p.lastUsed) ? ' · used ' + rel(p.lastUsed) : ''}</div></div>
+      <button type="button" class="del" onclick="removePasskey('${p.id}', '${esc(p.name).replace(/'/g, '')}')">Remove</button></div>`).join('') + '</div>';
+  if (!(passkey.available && passkey.browser)) {
+    html += `<div class="hint" style="margin:0">${esc(passkey.reason || 'This browser does not support passkeys.')}</div>`;
+  } else {
+    html += `<div class="hint" style="margin:0">Sign in with Face ID, a fingerprint or your device PIN instead of password and code${elsewhere ? `. ${elsewhere} passkey(s) belong to another address` : ''}.</div>
+      <div class="acts"><input type="text" id="pkName" maxlength="40" placeholder="Name, e.g. iPhone" style="flex:1;min-width:140px">
+      <button type="button" id="pkAdd"><svg class="i"><use href="#i-key"/></svg>Add a passkey</button></div>`;
+  }
+  box.insertAdjacentHTML('beforeend', html);
+  const add = $('#pkAdd');
+  if (add) add.onclick = async () => {
+    try {
+      const r = await passkeyCeremony('create', '/api/me/passkeys', {name: $('#pkName').value});
+      toast(`Passkey "${r.name}" added`); await refresh(); renderMfaBox();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+async function removePasskey(id, name) {
+  if (!confirm(`Remove passkey "${name}"? You can still sign in with your password and code.`)) return;
+  if (await act('DELETE', '/api/me/passkeys/' + id, 'Passkey removed')) renderMfaBox();
+}
 
 authSubmit('#forgotForm', async f => {
   const msg = await api('POST', '/api/forgot', {login: f.login.value});
@@ -829,11 +921,12 @@ function renderMfaBox() {
   };
   if (!required) $('#mfaOff').onclick = async () => {
     acctDlg.close();
-    if (await askCode({title: 'Turn off two-factor authentication', hint: 'Enter a code from your authenticator app to confirm.',
+    if (await askCode({title: 'Turn off two-factor authentication', hint: 'Enter a code from your authenticator app to confirm. Your passkeys are removed too.',
         submit: code => api('POST', '/api/me/2fa/disable', {code}, true)})) {
       toast('Two-factor authentication is off'); refresh();
     }
   };
+  renderPasskeys(box);
 }
 
 $('#acctForm').onsubmit = async e => {
@@ -937,7 +1030,7 @@ function renderUsers() {
   $('#userRows').innerHTML = users.map(u => `<tr>
     <td class="main"><span style="display:inline-flex;align-items:center;gap:10px"><span class="av">${esc(u.username[0])}</span>${esc(u.username)}${u.id === me.id ? ' <span class="muted small">(you)</span>' : ''}</span></td>
     ${cell('E-mail', (esc(u.email) || '—') + (u.notify ? ` <span class="badge" title="receives notifications">${icon('mail').replace('class="i"', 'class="i" style="width:13px;height:13px"')}</span>` : ''), 'small')}
-    ${cell('Role', `<span class="badge ${u.role}">${u.role}</span> ${u.totp ? '<span class="badge on" title="Two-factor authentication on">2FA</span>' : '<span class="badge off" title="Two-factor authentication off">no 2FA</span>'}`)}
+    ${cell('Role', `<span class="badge ${u.role}">${u.role}</span> ${u.totp ? '<span class="badge on" title="Two-factor authentication on">2FA</span>' : '<span class="badge off" title="Two-factor authentication off">no 2FA</span>'}${u.passkeys ? ` <span class="badge on" title="${u.passkeys} passkey(s)">passkey</span>` : ''}`)}
     ${cell('Created', date(u.created), 'small nw')}
     ${cell('Last login', rel(u.lastLogin), 'small nw')}
     <td class="acts-cell"><div class="acts"><button onclick="editUser('${u.id}')">Edit</button>

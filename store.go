@@ -138,12 +138,16 @@ type User struct {
 	Notify   bool   `json:"notify"` // receive notification e-mails
 
 	// two-factor authentication (TOTP)
-	TOTPSecret   string    `json:"totpSecret,omitempty"`   // sealed; set = 2FA on
-	TOTPPending  string    `json:"totpPending,omitempty"`  // sealed; during setup, until confirmed
-	TOTPLastStep int64     `json:"totpLastStep,omitempty"` // last accepted time step (no code reuse)
-	Recovery     []string  `json:"recovery,omitempty"`     // SHA-256 of unused recovery codes
-	Created      time.Time `json:"created"`
-	LastLogin    time.Time `json:"lastLogin,omitzero"`
+	TOTPSecret   string   `json:"totpSecret,omitempty"`   // sealed; set = 2FA on
+	TOTPPending  string   `json:"totpPending,omitempty"`  // sealed; during setup, until confirmed
+	TOTPLastStep int64    `json:"totpLastStep,omitempty"` // last accepted time step (no code reuse)
+	Recovery     []string `json:"recovery,omitempty"`     // SHA-256 of unused recovery codes
+
+	// passkeys (optional, on top of TOTP)
+	WebAuthnID []byte     `json:"webauthnId,omitempty"` // random user handle
+	Passkeys   []*Passkey `json:"passkeys,omitempty"`
+	Created    time.Time  `json:"created"`
+	LastLogin  time.Time  `json:"lastLogin,omitzero"`
 }
 
 type Config struct {

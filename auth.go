@@ -296,10 +296,11 @@ type userView struct {
 	LastLogin    time.Time `json:"lastLogin,omitzero"`
 	TOTP         bool      `json:"totp"`         // 2FA is on
 	RecoveryLeft int       `json:"recoveryLeft"` // unused recovery codes
+	Passkeys     int       `json:"passkeys"`     // number of passkeys
 }
 
 func viewOf(u *User) userView {
-	return userView{u.ID, u.Username, u.Role, u.Email, u.Notify, u.Created, u.LastLogin, u.has2FA(), len(u.Recovery)}
+	return userView{u.ID, u.Username, u.Role, u.Email, u.Notify, u.Created, u.LastLogin, u.has2FA(), len(u.Recovery), len(u.Passkeys)}
 }
 
 // ---- handlers ----
@@ -308,7 +309,7 @@ func (a *app) getSession(w http.ResponseWriter, r *http.Request) {
 	var setup bool
 	a.store.Read(func(c *Config) { setup = len(c.Users) == 0 })
 	resp := map[string]any{"setupRequired": setup, "user": nil, "resetEnabled": a.resetEnabled(),
-		"mfaPending": false, "mfaSetupRequired": false}
+		"mfaPending": false, "mfaSetupRequired": false, "passkey": a.passkeyStatus(r)}
 	if s, ok := a.sessions.get(sessionToken(r)); ok && s.mfaWait {
 		resp["mfaPending"] = true
 	}

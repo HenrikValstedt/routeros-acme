@@ -250,10 +250,11 @@ func (a *app) disable2FA(w http.ResponseWriter, r *http.Request) {
 	_ = a.store.Update(func(c *Config) error {
 		if x := c.user(me.ID); x != nil {
 			x.TOTPSecret, x.TOTPPending, x.TOTPLastStep, x.Recovery = "", "", 0, nil
+			clearPasskeys(x) // passkeys build on 2FA
 		}
 		return nil
 	})
-	a.mgr.logf("user %q turned off two-factor authentication", me.Username)
+	a.mgr.logf("user %q turned off two-factor authentication (and removed passkeys)", me.Username)
 	writeJSON(w, "ok")
 }
 
@@ -272,6 +273,7 @@ func (a *app) reset2FA(w http.ResponseWriter, r *http.Request) {
 			return errors.New("not found")
 		}
 		x.TOTPSecret, x.TOTPPending, x.TOTPLastStep, x.Recovery, name = "", "", 0, nil, x.Username
+		clearPasskeys(x)
 		return nil
 	})
 	if err != nil {
@@ -279,6 +281,6 @@ func (a *app) reset2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.sessions.removeUser(id, "")
-	a.mgr.logf("two-factor authentication of %q reset by %s", name, me.Username)
+	a.mgr.logf("two-factor authentication and passkeys of %q reset by %s", name, me.Username)
 	writeJSON(w, "ok")
 }
