@@ -203,7 +203,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
     <a class="brand" href="#overview"><span class="logo"><svg><use href="#i-shield"/></svg></span><span>RouterOS <b>ACME</b></span></a>
     <nav aria-label="Sections">
       <a href="#features">Features</a><a href="#flow">How it works</a><a href="#start">Get started</a>
-      <a href="#security">Security</a><a href="#daily">Day to day</a><a href="#mobile">Mobile</a><a href="#reference">Reference</a>
+      <a href="#security">Security</a><a href="#daily">Day to day</a><a href="#mobile">Mobile</a><a href="#updates">Updates</a><a href="#reference">Reference</a>
     </nav>
   </div>
 </header>
@@ -212,11 +212,11 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
 <section class="hero" id="overview">
   <div class="wrap">
     <div>
-      <div class="eyebrow">Self-hosted · one small container</div>
+      <div class="eyebrow">Self-hosted · one small container · v1.0.1</div>
       <h1 style="margin-top:12px">Let's Encrypt for your <span>MikroTik routers</span>, without the scripts.</h1>
       <p class="lede">RouterOS ACME issues and renews certificates through Cloudflare DNS and installs them on your routers over the encrypted RouterOS API. You enroll each router once from the web UI. After that it runs by itself.</p>
       <div class="chips">
-        <span class="chip">Wildcard certificates</span><span class="chip">RouterOS 7</span><span class="chip">amd64 · arm64 · armv7</span><span class="chip">~10 MB image</span>
+        <span class="chip">Wildcard certificates</span><span class="chip">RouterOS 7</span><span class="chip">amd64 · arm64 · armv7</span><span class="chip">~4 MB download</span>
       </div>
       <div class="cta"><a class="btn pri" href="#start">Get started</a><a class="btn" href="#flow">How it works</a></div>
     </div>
@@ -298,15 +298,20 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
 <section class="band" id="start">
   <div class="wrap">
     <div class="head"><div class="eyebrow">Get started</div><h2>Up and running in six steps</h2>
-      <p class="lede">You need Docker, a domain in Cloudflare and a MikroTik router on RouterOS 7.</p></div>
+      <p class="lede">You need Docker with Compose, access to the GitHub repository, a domain in Cloudflare and a MikroTik router on RouterOS 7.</p></div>
     <div class="steps">
 
       <div class="step">
-        <div class="txt"><div class="num"></div><h3>Start the container</h3>
-          <p>Build and start it with Docker Compose. Configuration and certificates live in <code>./data</code>.</p>
+        <div class="txt"><div class="num"></div><h3>Pull and start the container</h3>
+          <p>The image is published privately on GitHub's container registry, for amd64, arm64 and arm/v7. Docker picks the right one.</p>
+          <p>Log in once with your GitHub username and a token that can read packages, then start it with <code>docker-compose.yml</code> from the repository. Configuration and certificates live in <code>./data</code>.</p>
           <p>On first start the log prints a one-time <b>setup code</b>.</p></div>
-        <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># in the project folder</span>
-docker compose up -d --build
+        <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># once: a GitHub token with read:packages as password</span>
+docker login ghcr.io -u &lt;github-username&gt;
+
+<span class="c"># with docker-compose.yml from the repository</span>
+docker compose pull
+docker compose up -d
 docker compose logs | grep "Setup code"
 
 <span class="c"># ==> FIRST RUN: open the web UI and create the admin account.</span>
@@ -417,7 +422,34 @@ docker compose logs | grep "Setup code"
   </div>
 </section>
 
-<section class="band" id="reference">
+<section class="band" id="updates">
+  <div class="wrap">
+    <div class="head"><div class="eyebrow">Versions &amp; updates</div><h2>Pin a version, upgrade when you choose</h2>
+      <p class="lede">Every release is published as an image for all three architectures, built and tested by GitHub Actions. The version you run is shown in the footer of the web UI.</p></div>
+    <div class="refgrid">
+      <div class="tablewrap"><table>
+        <thead><tr><th>Tag</th><th>Points to</th><th>Use it for</th></tr></thead>
+        <tbody>
+          <tr><td>1.0.1</td><td>this release</td><td>Servers. Nothing changes until you change the tag</td></tr>
+          <tr><td>1.0</td><td>newest 1.0.x</td><td>Picking up fixes automatically on the next pull</td></tr>
+          <tr><td>latest</td><td>newest main build</td><td>Trying the newest changes</td></tr>
+          <tr><td>sha-deb9f18</td><td>one commit</td><td>Going back to an exact build</td></tr>
+        </tbody></table></div>
+      <div class="notes">
+        <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># pin the tag in docker-compose.yml,</span>
+<span class="c"># e.g. image: …/routeros-acme:1.0.1</span>
+docker compose pull
+docker compose up -d
+docker compose logs | head -1
+<span class="c"># RouterOS ACME 1.0.1</span></pre></div>
+        <div class="note"><b>Access for colleagues</b>Add them as collaborators on the GitHub repository. They log in to ghcr.io with their own token; nobody shares yours.</div>
+        <div class="note"><b>What changed</b>Every version has release notes on the repository's Releases page. Upgrades keep <code>data/</code> as it is.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="reference">
   <div class="wrap">
     <div class="head"><div class="eyebrow">Reference</div><h2>Configuration</h2>
       <p class="lede">Everything else is set in the web UI and stored in <code>data/config.json</code>.</p></div>
@@ -439,14 +471,14 @@ docker compose logs | grep "Setup code"
         <div class="note"><b>Network</b>The container must reach each router's api-ssl port (8729 by default), and its SSH port during enrollment.</div>
         <div class="note"><b>Behind a reverse proxy</b>Let the proxy handle HTTPS, set TRUSTED_PROXIES, and don't publish port 8080 to the network.</div>
         <div class="note"><b>Backups</b>Back up <code>data/</code>. Keep <code>secret.key</code> apart from config backups. Without it, routers need to be enrolled again.</div>
-        <div class="note"><b>Multi-arch image</b><code>docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t you/routeros-acme --push .</code></div>
+        <div class="note"><b>Build from source</b>Docker 23+ with buildx, no QEMU needed. <code>docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t routeros-acme .</code> BUILD.md has every prerequisite.</div>
       </div>
     </div>
   </div>
 </section>
 </main>
 
-<footer><div class="wrap"><span>RouterOS ACME · self-hosted certificate management for MikroTik</span><span>Screenshots show demo data, plus a real enrollment on a RouterOS 7.25.1 test VM.</span></div></footer>
+<footer><div class="wrap"><span>RouterOS ACME 1.0.1 · self-hosted certificate management for MikroTik</span><span>Screenshots show demo data, plus a real enrollment on a RouterOS 7.25.1 test VM.</span></div></footer>
 
 <div class="lb" id="lb" hidden><img alt=""></div>
 
