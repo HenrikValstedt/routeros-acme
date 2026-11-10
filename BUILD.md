@@ -58,12 +58,12 @@ On Debian/other distributions, Docker's own repository (`docker-ce`, `docker-bui
 
 All commands run in the project folder.
 
-**Image for this machine:**
+**Image for this machine** (to use it with Compose, uncomment `build: .` in `docker-compose.yml`):
 ```sh
 docker build -t routeros-acme:latest .
 ```
 
-**Build and start with Compose** (uses `docker-compose.yml`, data in `./data`):
+**Build and start with Compose** (after uncommenting `build: .`; data in `./data`):
 ```sh
 docker compose up -d --build
 docker compose logs | grep "Setup code"
@@ -88,7 +88,8 @@ docker save routeros-acme:latest -o dist/routeros-acme-multiarch.tar     # here
 scp dist/routeros-acme-multiarch.tar server:
 docker load -i routeros-acme-multiarch.tar                               # on the server
 ```
-Then copy `docker-compose.yml` to the server, remove its `build: .` line, and run `docker compose up -d`.
+Then copy `docker-compose.yml` to the server and run `docker compose up -d` (it uses the image name from the
+compose file; tag the loaded image to match, or edit `image:`).
 
 **Check that a variant holds the right CPU architecture:**
 ```sh
@@ -97,7 +98,35 @@ docker cp $c:/routeros-acme ./routeros-acme-arm64 && docker rm $c
 file ./routeros-acme-arm64        # ELF 64-bit LSB executable, ARM aarch64
 ```
 
-## 3. Results (2026-11-10)
+## 3. Published images (ghcr.io)
+
+Every push to `main` and every `v*.*.*` tag is built and published by GitHub Actions
+(`.github/workflows/docker.yml`) to **`ghcr.io/henrikvalstedt/routeros-acme`**, for all three architectures.
+The workflow runs `go vet` and `go test` first. Pull requests are built but not published.
+
+| Event | Tags |
+|---|---|
+| push to `main` | `latest`, `sha-<short>` |
+| tag `v1.2.3` | `1.2.3`, `1.2`, `sha-<short>` |
+
+**Release a version:** `git tag v1.0.0 && git push origin v1.0.0`.
+
+**Access:** the Dockerfile's `org.opencontainers.image.source` label links the package to the repository, so it is
+private and readable by everyone with read access to the repository. To pull, log in with a GitHub token that has
+`read:packages`: `docker login ghcr.io -u <user>`.
+
+**Push from your own machine** (needs a token with `write:packages`; with the GitHub CLI:
+`gh auth refresh -s write:packages`):
+```sh
+gh auth token | docker login ghcr.io -u <user> --password-stdin
+docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 \
+  -t ghcr.io/henrikvalstedt/routeros-acme:latest --push .
+docker logout ghcr.io      # don't leave the token in ~/.docker/config.json
+```
+The first publish should come from the workflow: a package created by a personal push may not give the
+repository's workflow write access.
+
+## 4. Results (2026-11-10)
 
 | Platform | Download (compressed) | On disk | Program |
 |---|---|---|---|
@@ -119,7 +148,7 @@ file ./routeros-acme-arm64        # ELF 64-bit LSB executable, ARM aarch64
 **Not verified:** running the arm64 and arm/v7 images on real ARM hardware. Their programs were checked
 for the right architecture, and the same code is tested on amd64.
 
-## 4. Notes for running
+## 5. Notes for running
 
 - The container runs as root, so files in `./data` are root-owned with mode 0600. Read or back them up with `sudo`.
 - Back up `data/secret.key` separately from `config.json`. Without it, enrolled routers must be enrolled again.

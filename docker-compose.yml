@@ -1,7 +1,7 @@
 services:
   routeros-acme:
-    build: .
-    image: routeros-acme:latest
+    image: ghcr.io/henrikvalstedt/routeros-acme:latest
+    # build: .                 # uncomment to build from source instead of pulling (see BUILD.md)
     container_name: routeros-acme
     restart: unless-stopped
     ports:

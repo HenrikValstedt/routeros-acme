@@ -20,10 +20,30 @@ More in [docs/screenshots](docs/screenshots/README.md). For an illustrated guide
 
 ## Quick start
 
+The image is published to the GitHub container registry for amd64, arm64 and arm/v7:
+`ghcr.io/henrikvalstedt/routeros-acme`. The repository is private, so log in once with your GitHub account
+first. You need read access to this repository and a token with the `read:packages` scope
+(*GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)*):
+
 ```sh
-docker compose up -d --build
+docker login ghcr.io -u <your-github-username>        # password: the token
+```
+
+Then, with `docker-compose.yml` from this repository:
+
+```sh
+docker compose pull
+docker compose up -d
 docker compose logs | grep "Setup code"   # one-time code for creating the admin account
 ```
+
+| Tag | What |
+|---|---|
+| `latest` | newest build of `main` |
+| `1.2.3`, `1.2` | releases (git tags `v1.2.3`) |
+| `sha-abc1234` | one specific commit |
+
+To build from source instead, see [BUILD.md](BUILD.md).
 
 Open `http://<host>:8080`. On first run you'll be asked for the setup code from the log and for the
 username and password of the first **admin** account. Then:
