@@ -18,6 +18,10 @@ import (
 	_ "time/tzdata" // TZ support in a scratch image
 )
 
+// version is set at build time: go build -ldflags "-X main.version=1.0.1".
+// The Dockerfile passes it from the VERSION build argument.
+var version = "dev"
+
 //go:embed web/index.html
 var webFS embed.FS
 
@@ -46,12 +50,18 @@ func env(k, def string) string {
 
 func main() {
 	health := flag.Bool("healthcheck", false, "probe the local web server and exit")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("routeros-acme", version)
+		return
+	}
 	listen := env("LISTEN", ":8080")
 	if *health {
 		os.Exit(healthcheck(listen))
 	}
 	log.SetFlags(log.LstdFlags)
+	log.Printf("RouterOS ACME %s", version)
 
 	dataDir := env("DATA_DIR", "/data")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -247,7 +257,7 @@ func (a *app) getState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"settings": sv, "certs": cfg.Certs, "routers": routers, "mail": mailViewOf(cfg.Mail),
-		"busy": a.mgr.Busy(), "now": time.Now(), "me": viewOf(currentUser(r)),
+		"busy": a.mgr.Busy(), "now": time.Now(), "me": viewOf(currentUser(r)), "version": version,
 	})
 }
 

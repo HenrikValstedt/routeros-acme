@@ -92,6 +92,10 @@ td.acts-cell .acts{justify-content:flex-end;flex-wrap:nowrap}
 td.acts-cell button{height:34px;padding:0 12px;font-size:13.5px}
 th,.nw,.lockline{white-space:nowrap}
 .empty{padding:40px 20px!important;text-align:center;color:var(--muted)}
+.appfoot{display:flex;justify-content:center;flex-wrap:wrap;gap:6px 14px;margin-top:28px;padding-top:16px;border-top:1px solid var(--line);
+  color:var(--muted);font-size:12.5px}
+.appfoot a{color:var(--muted)}.appfoot a:hover{color:var(--acc)}
+.appfoot .ver{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;padding:1px 8px;border-radius:99px;background:var(--mute-bg)}
 .empty svg.i{width:34px;height:34px;display:block;margin:0 auto 10px;opacity:.55}
 
 /* ---- text, pills, badges ---- */
@@ -231,7 +235,7 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
   table.rt td.acts-cell{padding-top:12px;text-align:left}
   table.rt td.acts-cell .acts{justify-content:stretch;width:100%}
   table.rt td.acts-cell .acts button{flex:1 1 auto}
-  table.rt td.empty{display:block}
+  table.rt td.empty{display:block;text-align:center}
   dialog,dialog.sm{width:100%;max-width:100%;margin:auto 0 0;border-radius:22px 22px 0 0;max-height:94dvh}
   dialog[open]{animation:sheet .22s cubic-bezier(.2,.8,.2,1)}
   dialog>form{padding:12px 16px 0}
@@ -394,6 +398,8 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
     <div class="ph"><div><h2>Log</h2><p>The last 500 events, newest at the bottom.</p></div></div>
     <div class="card" style="padding:10px"><pre id="log" class="mono"></pre></div>
   </section>
+  <footer class="appfoot"><span>RouterOS ACME <span class="ver" id="appVer" title="Version">–</span></span>
+    <a href="https://github.com/HenrikValstedt/routeros-acme" target="_blank" rel="noopener">GitHub</a></footer>
 </main>
 </div>
 
@@ -715,6 +721,7 @@ const cell = (label, html, cls = '') => `<td data-label="${label}" class="${cls}
 const emptyRow = (cols, ic, html) => `<tr><td colspan="${cols}" class="empty">${icon(ic)}${html}</td></tr>`;
 function render() {
   $('#status').classList.toggle('busy', S.busy);
+  if (S.version) $('#appVer').textContent = S.version;
   $('#statusTxt').textContent = S.busy ? 'Working…' : 'Idle';
   renderStats();
   $('#certRows').innerHTML = S.certs.length ? S.certs.map(c => `<tr>

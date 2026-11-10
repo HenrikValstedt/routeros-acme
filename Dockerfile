@@ -9,8 +9,10 @@ RUN go mod download
 COPY *.go ./
 COPY web ./web
 ARG TARGETOS TARGETARCH TARGETVARIANT
+# Shown in the web UI footer and by `routeros-acme -version`. CI passes 1.2.3 for tags, main-<sha> otherwise.
+ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} \
-    go build -trimpath -ldflags="-s -w" -o /out/routeros-acme .
+    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/routeros-acme .
 
 FROM scratch
 # Links the image to the GitHub repository: on ghcr.io it then gets the repository's visibility and access.

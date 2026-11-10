@@ -60,8 +60,10 @@ All commands run in the project folder.
 
 **Image for this machine** (to use it with Compose, uncomment `build: .` in `docker-compose.yml`):
 ```sh
-docker build -t routeros-acme:latest .
+docker build --build-arg VERSION=1.0.1 -t routeros-acme:latest .
 ```
+`VERSION` is shown in the web UI footer, logged at start-up and printed by `routeros-acme -version`.
+Without it the version is `dev`. The GitHub workflow sets it to `1.2.3` for tags and `main-<sha>` otherwise.
 
 **Build and start with Compose** (after uncommenting `build: .`; data in `./data`):
 ```sh
