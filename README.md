@@ -50,14 +50,20 @@ To build from source instead, see [BUILD.md](BUILD.md).
 Open `http://<host>:8080`. On first run you'll be asked for the setup code from the log and for the
 username and password of the first **admin** account. Then:
 
-1. **Settings**: enter your ACME e-mail and a Cloudflare API token
-   (*My Profile → API Tokens → Create Token → "Edit zone DNS"* template, i.e. `Zone:Read` + `DNS:Edit`).
-   Turn on *staging* while you test.
-2. **Certificates → Add**: list the domain names, one per line (`router.example.com`, `*.example.com`).
+1. **Settings**: enter your ACME e-mail and turn on *staging* while you test. Under **DNS accounts**, add a Cloudflare
+   API token (*My Profile → API Tokens → Create Token → "Edit zone DNS"* template, i.e. `Zone:Read` + `DNS:Edit`).
+   Add more tokens if your domains are in different Cloudflare accounts, or if you use one token per zone (see below).
+2. **Certificates → Add**: list the domain names, one per line (`router.example.com`, `*.example.com`). The dialog
+   shows which DNS account will validate each name.
 3. **Devices → Enroll device**: enter the router address and an admin SSH login, confirm the device's
    SSH host key, review the changes, and enroll (see below). Use **Test** to check the connection; the certificate is deployed automatically.
 
 Every *check interval* (default 12h) the app renews certificates that have fewer than *renew days* (default 30) left. It then pushes them to every enabled router that doesn't have the current one.
+
+**Stopping and updating** (`docker stop`, Portainer "Update the stack") is a clean stop. New web requests are refused,
+a running renewal or deploy finishes the certificate or router it's working on, the rest runs at the next start, and
+the app exits with code 0. `docker-compose.yml` sets `stop_grace_period: 30s` because Docker's default is only 10
+seconds. Use the same line in Portainer stacks.
 
 ## Building
 
@@ -84,7 +90,26 @@ docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t routeros-
 | `COOKIE_SECURE`  | `false`  | `true` always sets the Secure flag on the session cookie |
 
 All other configuration lives in `/data/config.json` (mode 0600) and is edited through the UI.
-Secrets (Cloudflare token, router passwords and keys) are never sent back to the browser.
+Secrets (Cloudflare tokens, SMTP password, router passwords and keys) are stored encrypted and never sent back to the browser.
+
+## DNS accounts (several Cloudflare tokens)
+
+Let's Encrypt checks domain ownership with a temporary DNS record, so the app needs a Cloudflare API token that can edit
+DNS for each zone. Add them under **Settings → DNS accounts**:
+
+- **One account per token.** Use several when your domains live in different Cloudflare accounts, or when you prefer one
+  narrowly scoped token per zone. Cloudflare is the only provider for now; the list is ready for more.
+- **The token is checked when you save it.** The app asks Cloudflare which zones it can manage and lists them, so a
+  wrong or under-privileged token is caught right away. Zone lists are refreshed daily, or with **Refresh**. Adding or
+  changing a token asks for a fresh 2FA code, and tokens are stored encrypted.
+- **Certificates pick the account automatically,** by the most specific zone that contains each name. One certificate
+  can even mix zones from different accounts, for example `*.example.com` and `example.org`. You can also pin a
+  certificate to one account in its dialog, which shows the account for each name as you type.
+- **Names no account covers are refused when you save the certificate,** with the name in the message, instead of
+  failing at renewal time.
+- An account used by a pinned certificate can't be deleted until the certificate is changed.
+- **Upgrading from 1.1 or earlier:** the single Cloudflare token from Settings becomes the DNS account "Cloudflare"
+  automatically, and existing certificates keep working.
 
 ## E-mail: notifications, invitations, password reset
 
@@ -194,7 +219,7 @@ password alone isn't enough.
 - **Signing in:** password, then the 6-digit code (or a recovery code). Each code works only once, and wrong codes are
   rate-limited like wrong passwords.
 - **Sensitive actions ask for a fresh code** ("Confirm it's you"), even when you're signed in: enrolling a device,
-  removing a device with cleanup, a new Cloudflare token or SMTP password, switching off "2FA for everyone", creating or
+  removing a device with cleanup, adding or changing a Cloudflare token, a new SMTP password, switching off "2FA for everyone", creating or
   promoting an admin, changing another user's password, inviting an admin, deleting a user, resetting someone's 2FA,
   and new recovery codes. A code counts for 5 minutes (`OTP_FRESH_MINUTES`).
 - **Viewers:** 2FA is optional (*My account → Set up two-factor authentication*). Settings has a switch to
@@ -261,7 +286,7 @@ Make sure the container can reach the device's api-ssl port, and its SSH port du
 ## Security notes
 
 - The container serves plain HTTP. Keep it on a trusted network or put it behind a reverse proxy with TLS (see above).
-- Use a Cloudflare token scoped to just the zones you need.
+- Use Cloudflare tokens scoped to just the zones they're for (one DNS account per token).
 
 ## Development
 
@@ -271,6 +296,7 @@ go test ./...          # auth/roles, invite/reset via fake SMTP, notifications, 
 # full device lifecycle against a real RouterOS 7 (e.g. a CHR VM):
 ROS_HOST=127.0.0.1 ROS_SSH_PORT=2222 ROS_API_PORT=8729 ROS_USER=admin ROS_PASS=... go test -run Real -v .
 go run .               # DATA_DIR=./data LISTEN=:8080
+# CLOUDFLARE_API_URL=http://127.0.0.1:9999  points the app at a fake Cloudflare API (testing only)
 ```
 
 ## Credits

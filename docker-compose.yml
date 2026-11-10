@@ -4,6 +4,7 @@ services:
     # build: .                 # uncomment to build from source instead of pulling (see BUILD.md)
     container_name: routeros-acme
     restart: unless-stopped
+    stop_grace_period: 30s     # lets a running renewal or deploy finish when stopping/updating
     ports:
       - "8080:8080"            # behind a reverse proxy: remove this, or use "127.0.0.1:8080:8080"
     environment:

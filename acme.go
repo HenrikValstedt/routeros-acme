@@ -19,9 +19,9 @@ import (
 
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
+	"github.com/go-acme/lego/v4/challenge"
 	"github.com/go-acme/lego/v4/challenge/dns01"
 	"github.com/go-acme/lego/v4/lego"
-	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
 	"github.com/go-acme/lego/v4/registration"
 )
 
@@ -86,9 +86,9 @@ func saveAccount(path string, u *acmeUser) error {
 
 // obtain requests a new certificate via DNS-01 on Cloudflare and stores it
 // as <data>/certs/<id>/{fullchain,privkey}.pem.
-func obtain(dataDir string, st Settings, c Cert, logf func(string, ...any)) (*x509.Certificate, error) {
-	if st.Email == "" || st.CFToken == "" {
-		return nil, errors.New("ACME e-mail and Cloudflare API token must be set in Settings")
+func obtain(dataDir string, st Settings, c Cert, prov challenge.Provider, logf func(string, ...any)) (*x509.Certificate, error) {
+	if st.Email == "" {
+		return nil, errors.New("the ACME e-mail address must be set in Settings")
 	}
 	if len(c.Domains) == 0 {
 		return nil, errors.New("certificate has no domains")
@@ -115,12 +115,6 @@ func obtain(dataDir string, st Settings, c Cert, logf func(string, ...any)) (*x5
 		return nil, err
 	}
 
-	cf := cloudflare.NewDefaultConfig()
-	cf.AuthToken = st.CFToken
-	prov, err := cloudflare.NewDNSProviderConfig(cf)
-	if err != nil {
-		return nil, fmt.Errorf("cloudflare: %w", err)
-	}
 	var opts []dns01.ChallengeOption
 	if r := splitList(st.DNSResolvers); len(r) > 0 {
 		opts = append(opts, dns01.AddRecursiveNameservers(dns01.ParseNameservers(r)))

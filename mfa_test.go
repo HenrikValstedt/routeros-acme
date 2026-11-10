@@ -113,7 +113,7 @@ func TestTwoFactorFlow(t *testing.T) {
 		body any
 	}{
 		{"POST", "/api/devices/enroll", map[string]string{}},
-		{"PUT", "/api/settings", map[string]any{"email": "a@b.c", "keyType": "rsa2048", "renewDays": 30, "checkHours": 12, "cfToken": "new-token"}},
+		{"POST", "/api/dns-accounts", map[string]any{"name": "x", "token": "new-token"}},
 		{"POST", "/api/users", map[string]string{"username": "eve", "role": "admin", "password": "evepassword"}},
 		{"POST", "/api/invites", map[string]string{"email": "x@example.org", "role": "admin"}},
 		{"PUT", "/api/mail", map[string]any{"host": "smtp", "port": 25, "security": "none", "from": "a@b.c", "warnDays": 14, "password": "x"}},
@@ -258,17 +258,18 @@ func TestStoredSecretsEncrypted(t *testing.T) {
 	admin := newClient(t, srv)
 	admin.expect(200, "POST", "/api/setup", map[string]string{"code": a.setupCode, "username": "boss", "password": "supersecret"})
 	admin.turnOn2FA() // also makes the session fresh for the token change
-	admin.expect(200, "PUT", "/api/settings", map[string]any{"email": "a@example.org", "keyType": "rsa2048", "renewDays": 30, "checkHours": 12, "cfToken": "new-cf-token"})
+	fakeCloudflare(t)
+	admin.expect(200, "POST", "/api/dns-accounts", map[string]any{"name": "main", "token": "tok-a"})
 	admin.expect(200, "PUT", "/api/mail", map[string]any{"host": "smtp.example.org", "port": 587, "security": "starttls", "user": "u", "password": "new-smtp-pw", "from": "a@example.org", "warnDays": 14})
 	raw, _ = os.ReadFile(a.dataDir + "/config.json")
-	if strings.Contains(string(raw), "new-cf-token") || strings.Contains(string(raw), "new-smtp-pw") {
+	if strings.Contains(string(raw), `"tok-a"`) || strings.Contains(string(raw), "new-smtp-pw") {
 		t.Fatal("new secrets written in plain text")
 	}
 	c = a.store.Snapshot()
-	if v, _ := a.mgr.sealer.reveal(c.Settings.CFToken); v != "new-cf-token" || !isSealed(c.Mail.Password) {
+	if v, _ := a.mgr.sealer.reveal(c.DNS[0].Token); v != "tok-a" || !isSealed(c.Mail.Password) {
 		t.Fatal("new secrets not encrypted correctly")
 	}
-	if s := admin.expect(200, "GET", "/api/state", nil); strings.Contains(s, "new-cf-token") || strings.Contains(s, "v1:") {
+	if s := admin.expect(200, "GET", "/api/state", nil); strings.Contains(s, `"tok-a"`) || strings.Contains(s, "v1:") {
 		t.Fatal("secret (or its ciphertext) sent to the browser")
 	}
 

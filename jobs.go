@@ -20,8 +20,10 @@ type Manager struct {
 	store   *Store
 	dataDir string
 
-	jobMu sync.Mutex // serialises jobs
-	busy  atomic.Int32
+	jobMu    sync.Mutex // serialises jobs
+	busy     atomic.Int32
+	jobs     sync.WaitGroup
+	stopping atomic.Bool // set by Shutdown: no new jobs, running ones stop between steps
 
 	logMu sync.Mutex
 	logs  []logLine
@@ -60,17 +62,43 @@ func (m *Manager) Logs() []logLine {
 
 func (m *Manager) Busy() bool { return m.busy.Load() > 0 }
 
-// Go runs fn in the background, serialised with other jobs.
+// Go runs fn in the background, serialised with other jobs. After Shutdown it does nothing.
 func (m *Manager) Go(fn func()) {
+	if m.stopping.Load() {
+		return
+	}
 	m.busy.Add(1)
+	m.jobs.Add(1)
 	go func() {
+		defer m.jobs.Done()
 		defer m.busy.Add(-1)
 		m.jobMu.Lock()
 		defer m.jobMu.Unlock()
+		if m.stopping.Load() {
+			return // queued behind another job when the stop came
+		}
 		fn()
 		m.flushEvents()
 	}()
 }
+
+// Shutdown stops new jobs and waits up to timeout for the running one, which finishes
+// its current step (one certificate or one router) and skips the rest. It reports
+// whether everything finished in time.
+func (m *Manager) Shutdown(timeout time.Duration) bool {
+	m.stopping.Store(true)
+	done := make(chan struct{})
+	go func() { m.jobs.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// stop tells a long job to end after its current step.
+func (m *Manager) stop() bool { return m.stopping.Load() }
 
 // Scheduler periodically renews and deploys. Trigger() runs a check now.
 func (m *Manager) Scheduler() {
@@ -96,9 +124,14 @@ func (m *Manager) Trigger() {
 
 // cycle renews certificates that are due and pushes them to routers that are out of date.
 func (m *Manager) cycle() {
+	m.refreshStaleZones()
 	cfg := m.store.Snapshot()
 	m.logf("check: %d certificate(s), %d router(s)", len(cfg.Certs), len(cfg.Routers))
 	for _, c := range cfg.Certs {
+		if m.stop() {
+			m.logf("check stopped early: shutting down (the rest runs at the next start)")
+			return
+		}
 		if !needsRenewal(c, cfg.Settings.RenewDays) {
 			continue
 		}
@@ -142,6 +175,9 @@ func (m *Manager) checkExpiry() {
 func (m *Manager) deployOutdated() {
 	cfg := m.store.Snapshot()
 	for _, r := range cfg.Routers {
+		if m.stop() {
+			return
+		}
 		c := cfg.cert(r.CertID)
 		if r.Enabled && r.enrolled() && c != nil && c.Fingerprint != "" && r.DeployedFP != c.Fingerprint {
 			m.deploy(r.ID)
@@ -156,16 +192,17 @@ func (m *Manager) issue(id string) {
 	if c == nil {
 		return
 	}
-	st := cfg.Settings
-	var err error
-	if m.sealer != nil {
-		if st.CFToken, err = m.sealer.reveal(st.CFToken); err != nil { // decrypted only for this request
-			err = fmt.Errorf("cloudflare token: %w – enter it again in Settings", err)
-		}
-	}
 	var leaf *x509.Certificate
+	prov, routes, err := dnsProviderFor(cfg, *c, m.sealer) // tokens decrypted only for this request
 	if err == nil {
-		leaf, err = obtain(m.dataDir, st, *c, m.logf)
+		var via []string
+		for _, r := range routes {
+			if a := cfg.dnsAccount(r.Account); a != nil {
+				via = append(via, r.Name+" → "+a.Name)
+			}
+		}
+		m.logf("certificate %q: DNS validation via %s", c.Name, strings.Join(via, ", "))
+		leaf, err = obtain(m.dataDir, cfg.Settings, *c, prov, m.logf)
 	}
 	_ = m.store.Update(func(cf *Config) error {
 		x := cf.cert(id)
@@ -313,6 +350,9 @@ func (m *Manager) test(id string) (map[string]string, error) {
 // rotateDue rotates service-account passwords older than rotateEvery.
 func (m *Manager) rotateDue() {
 	for _, r := range m.store.Snapshot().Routers {
+		if m.stop() {
+			return
+		}
 		if r.Enabled && r.enrolled() && time.Since(r.RotatedAt) > rotateEvery {
 			if err := m.rotate(r.ID); err != nil {
 				m.logf("[%s] password rotation failed: %v", r.Name, err)

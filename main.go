@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -11,10 +12,12 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	_ "time/tzdata" // TZ support in a scratch image
 )
@@ -98,6 +101,11 @@ func main() {
 	} else if n > 0 {
 		log.Printf("encrypted %d secret(s) that were stored in plain text", n)
 	}
+	if moved, err := store.migrateDNSAccounts(); err != nil {
+		log.Fatalf("DNS accounts: %v", err)
+	} else if moved {
+		log.Printf("moved the Cloudflare token to DNS account %q", "Cloudflare")
+	}
 	if a.proxy, err = parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")); err != nil {
 		log.Fatal(err)
 	}
@@ -120,6 +128,9 @@ func main() {
 		log.Fatal(err)
 	}
 	go a.mgr.Scheduler()
+	go a.mgr.refreshStaleZones() // e.g. right after the old single token was migrated
+	stopCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stopSignals()
 
 	srv := &http.Server{
 		Addr: listen, Handler: withBasePath(a.basePath, a.routes()),
@@ -127,7 +138,25 @@ func main() {
 		WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second,
 	}
 	log.Printf("web UI listening on %s%s/", listen, a.basePath)
-	log.Fatal(srv.ListenAndServe())
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.ListenAndServe() }()
+	select {
+	case err := <-serveErr:
+		log.Fatal(err)
+	case <-stopCtx.Done():
+	}
+	// Clean stop (docker stop / Portainer update): finish what is running, then exit 0.
+	// Docker waits 10 s by default before killing; compose sets stop_grace_period: 30s.
+	log.Printf("stopping: finishing running work")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("stopping: web requests still open after 10s: %v", err)
+	}
+	if !a.mgr.Shutdown(15 * time.Second) {
+		log.Printf("stopping: a renewal or deploy is still running; it will be repeated at the next start")
+	}
+	log.Printf("stopped")
 }
 
 // resetUser2FA is the last resort when a user (e.g. the only admin) has lost both the
@@ -256,6 +285,9 @@ func (a *app) routes() http.Handler {
 	adm("POST /api/invites", a.createInvite)
 	adm("DELETE /api/invites/{id}", a.deleteInvite)
 	adm("PUT /api/mail", a.putMail)
+	adm("POST /api/dns-accounts", a.saveDNSAccount)
+	adm("POST /api/dns-accounts/{id}/refresh", a.refreshDNSAccount)
+	adm("DELETE /api/dns-accounts/{id}", a.deleteDNSAccount)
 	adm("POST /api/mail/test", a.testMail)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +329,6 @@ func fail(w http.ResponseWriter, code int, err error) {
 
 type settingsView struct {
 	Settings
-	HasCFToken bool `json:"hasCfToken"`
 }
 
 type routerView struct {
@@ -307,7 +338,7 @@ type routerView struct {
 
 func (a *app) getState(w http.ResponseWriter, r *http.Request) {
 	cfg := a.store.Snapshot()
-	sv := settingsView{Settings: cfg.Settings, HasCFToken: cfg.Settings.CFToken != ""}
+	sv := settingsView{Settings: cfg.Settings}
 	sv.CFToken, sv.AdminHash = "", ""
 	routers := make([]routerView, 0, len(cfg.Routers))
 	for _, r := range cfg.Routers {
@@ -320,6 +351,7 @@ func (a *app) getState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"settings": sv, "certs": cfg.Certs, "routers": routers, "mail": mailViewOf(cfg.Mail),
+		"dnsAccounts": dnsViews(cfg), "dnsRoutes": certRoutes(cfg),
 		"busy": a.mgr.Busy(), "now": time.Now(), "me": viewOf(currentUser(r)), "version": version,
 	})
 }
@@ -333,8 +365,8 @@ func (a *app) putSettings(w http.ResponseWriter, r *http.Request) {
 	in.Email = strings.TrimSpace(in.Email)
 	var wasRequired bool
 	a.store.Read(func(c *Config) { wasRequired = c.Settings.Require2FA })
-	if (strings.TrimSpace(in.CFToken) != "" || (wasRequired && !in.Require2FA)) && !a.requireFresh(w, r) {
-		return // a new DNS token or weaker 2FA policy needs a fresh code
+	if wasRequired && !in.Require2FA && !a.requireFresh(w, r) {
+		return // a weaker 2FA policy needs a fresh code (DNS tokens: see DNS accounts)
 	}
 	switch {
 	case in.Email != "" && !strings.Contains(in.Email, "@"):
@@ -354,9 +386,6 @@ func (a *app) putSettings(w http.ResponseWriter, r *http.Request) {
 		s := &c.Settings
 		s.Email, s.Staging, s.KeyType, s.Require2FA = in.Email, in.Staging, in.KeyType, in.Require2FA
 		s.RenewDays, s.CheckHours, s.DNSResolvers = in.RenewDays, in.CheckHours, strings.TrimSpace(in.DNSResolvers)
-		if t := strings.TrimSpace(in.CFToken); t != "" {
-			s.CFToken = a.mgr.sealer.seal(t) // stored encrypted, like router secrets
-		}
 		for _, x := range c.Certs {
 			x.LastError = "" // settings may have fixed the problem: allow an immediate retry
 		}
@@ -405,8 +434,17 @@ func (a *app) saveCert(w http.ResponseWriter, r *http.Request) {
 		name = domains[0]
 	}
 	err = a.store.Update(func(c *Config) error {
+		if in.DNSID != "" && c.dnsAccount(in.DNSID) == nil {
+			return errors.New("unknown DNS account")
+		}
+		// with DNS accounts set up, every name must be covered by one (checked before saving)
+		if len(c.DNS) > 0 {
+			if _, err := routeCert(*c, Cert{Domains: domains, DNSID: in.DNSID}); err != nil {
+				return err
+			}
+		}
 		if in.ID == "" {
-			c.Certs = append(c.Certs, &Cert{ID: newID(), Name: name, Domains: domains})
+			c.Certs = append(c.Certs, &Cert{ID: newID(), Name: name, Domains: domains, DNSID: in.DNSID})
 			return nil
 		}
 		x := c.cert(in.ID)
@@ -416,7 +454,7 @@ func (a *app) saveCert(w http.ResponseWriter, r *http.Request) {
 		if !slices.Equal(x.Domains, domains) {
 			x.NotAfter = time.Time{} // force re-issue with the new names
 		}
-		x.Name, x.Domains, x.LastError = name, domains, ""
+		x.Name, x.Domains, x.LastError, x.DNSID = name, domains, "", in.DNSID
 		return nil
 	})
 	if err != nil {

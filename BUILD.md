@@ -60,7 +60,7 @@ All commands run in the project folder.
 
 **Image for this machine** (to use it with Compose, uncomment `build: .` in `docker-compose.yml`):
 ```sh
-docker build --build-arg VERSION=1.1.0 -t routeros-acme:latest .
+docker build --build-arg VERSION=1.2.0 -t routeros-acme:latest .
 ```
 `VERSION` is shown in the web UI footer, logged at start-up and printed by `routeros-acme -version`.
 Without it the version is `dev`. The GitHub workflow sets it to `1.2.3` for tags and `main-<sha>` otherwise.
@@ -147,8 +147,8 @@ repository's workflow write access.
 - **TLS to Let's Encrypt** works with the bundled CA certificates (staging server reached).
 - Sessions are dropped on container restart (by design), so you sign in again.
 
-**Not verified:** running the arm64 and arm/v7 images on real ARM hardware. Their programs were checked
-for the right architecture, and the same code is tested on amd64.
+**Verified on real ARM hardware (2026-11-10):** version 1.1.0, deployed with Portainer on an ARM-based QNAP NAS:
+enrolled real MikroTik routers and deployed certificates.
 
 ## 5. Notes for running
 

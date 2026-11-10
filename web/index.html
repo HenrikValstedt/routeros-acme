@@ -375,10 +375,9 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
   <section id="t-settings" hidden>
     <div class="ph"><div><h2>Settings</h2><p>Certificate authority, DNS provider and e-mail.</p></div></div>
     <form class="card" id="setForm"><fieldset id="setFs">
-      <div class="row"><h2>ACME &amp; Cloudflare</h2><span class="pill muted" id="roNote" hidden>Read-only</span></div>
+      <div class="row"><h2>Let's Encrypt</h2><span class="pill muted" id="roNote" hidden>Read-only</span></div>
       <div class="grid">
         <div><label>ACME account e-mail</label><input type="email" name="email" required></div>
-        <div><label>Cloudflare API token</label><input type="password" name="cfToken" autocomplete="off"><div class="hint">Token needs Zone:Read and DNS:Edit for the zones.</div></div>
         <div><label>Key type</label><select name="keyType"><option value="rsa2048">RSA 2048 (most compatible)</option><option value="rsa4096">RSA 4096</option><option value="ec256">ECDSA P-256</option><option value="ec384">ECDSA P-384</option></select></div>
         <div><label>Renew when fewer than (days)</label><input type="number" name="renewDays" min="1" max="60"></div>
         <div><label>Check interval (hours)</label><input type="number" name="checkHours" min="1" max="168"></div>
@@ -388,6 +387,12 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
       <label class="inl" style="display:flex;margin-top:10px"><input type="checkbox" name="require2fa"> Require two-factor authentication for everyone (admins always need it)</label>
       <div class="foot adm"><button class="pri">Save settings</button></div>
     </fieldset></form>
+    <div class="card flush" id="dnsCard">
+      <div class="row" style="padding:16px 16px 0;margin-bottom:6px"><h2>DNS accounts</h2>
+        <button type="button" class="adm" onclick="editDNS()"><svg class="i"><use href="#i-plus"/></svg>Add Cloudflare token</button></div>
+      <div class="hint" style="padding:0 16px 12px;margin:0">Each certificate is validated with the account whose zones contain its names. Add one token per Cloudflare account, or per zone.</div>
+      <div class="tw"><table class="rt"><thead><tr><th>Name</th><th>Zones</th><th>Status</th><th class="adm"></th></tr></thead><tbody id="dnsRows"></tbody></table></div>
+    </div>
     <form class="card" id="mailForm"><fieldset id="mailFs">
       <div class="row"><h2>E-mail &amp; notifications</h2><span class="small muted" id="mailState"></span></div>
       <div class="grid">
@@ -436,12 +441,26 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
 </main>
 </div>
 
+<dialog id="dnsDlg" class="sm"><form method="dialog" id="dnsForm">
+  <h3 id="dnsTitle">DNS account</h3>
+  <input type="hidden" name="id">
+  <label for="dnsName">Name</label><input type="text" id="dnsName" name="name" maxlength="60" placeholder="defaults to the first zone">
+  <label for="dnsProvider">Provider</label><select id="dnsProvider" name="provider" disabled><option value="cloudflare">Cloudflare</option></select>
+  <label for="dnsToken">API token</label><input type="password" id="dnsToken" name="token" autocomplete="off">
+  <div class="hint" id="dnsTokenHint"></div>
+  <div class="info small">In Cloudflare: <b>My Profile → API Tokens → Create Token</b>, use the <b>Edit zone DNS</b> template
+    (Zone:Read and DNS:Edit) and limit <b>Zone Resources</b> to the zones this token is for. The app checks the token and lists its zones when you save.</div>
+  <div class="foot"><button type="button" class="del" id="dnsDel" style="margin-right:auto">Delete</button><button type="button" onclick="dnsDlg.close()">Cancel</button><button class="pri" value="save">Save</button></div>
+</form></dialog>
+
 <dialog id="certDlg"><form method="dialog" id="certForm">
   <h3 id="certTitle">Certificate</h3>
   <input type="hidden" name="id">
   <label>Name</label><input type="text" name="name" placeholder="defaults to first domain">
   <label>Domains</label><textarea name="domains" required placeholder="router.example.com&#10;*.example.com"></textarea>
   <div class="hint">One per line. Wildcards (*.example.com) are supported with DNS validation.</div>
+  <label for="certDns">DNS account</label><select id="certDns" name="dnsAccountId"></select>
+  <div class="hint" id="certRoute"></div>
   <div class="foot"><button type="button" class="del" id="certDel" style="margin-right:auto">Delete</button><button type="button" onclick="certDlg.close()">Cancel</button><button class="pri" value="save">Save</button></div>
 </form></dialog>
 
@@ -888,15 +907,16 @@ function render() {
   if (S.version) $('#appVer').textContent = S.version;
   $('#statusTxt').textContent = S.busy ? 'Working…' : 'Idle';
   renderStats();
+  renderDNS();
   $('#certRows').innerHTML = S.certs.length ? S.certs.map(c => `<tr>
     <td class="main">${esc(c.name)}</td>
-    ${cell('Domains', c.domains.map(esc).join('<br>'), 'small')}
+    ${cell('Domains', c.domains.map(esc).join('<br>') + dnsVia(c), 'small')}
     ${cell('Expires', date(c.notAfter), 'small nw')}
     ${cell('Status', certStatus(c))}
     <td class="adm acts-cell"><div class="acts">
       <button onclick="act('POST','/api/certs/${c.id}/issue','Renewal started')">Renew</button>
       <button onclick="editCert('${c.id}')">Edit</button></div></td></tr>`).join('')
-    : emptyRow(5, 'cert', 'No certificates yet.<div class="small">Fill in <b>Settings</b> first, then add your first certificate.</div>');
+    : emptyRow(5, 'cert', 'No certificates yet.<div class="small">Add a Cloudflare token under <b>Settings → DNS accounts</b> first, then your first certificate.</div>');
   $('#routerRows').innerHTML = S.routers.length ? S.routers.map(r => {
     const c = S.certs.find(c => c.id === r.certId);
     return `<tr>
@@ -957,10 +977,9 @@ function loop() {
 // ---------- settings ----------
 function fillSettings() {
   const f = $('#setForm'), s = S.settings;
-  f.email.value = s.email || ''; f.cfToken.value = ''; f.keyType.value = s.keyType;
+  f.email.value = s.email || ''; f.keyType.value = s.keyType;
   f.renewDays.value = s.renewDays; f.checkHours.value = s.checkHours;
   f.dnsResolvers.value = s.dnsResolvers || ''; f.staging.checked = !!s.staging; f.require2fa.checked = !!s.require2faAll;
-  f.cfToken.placeholder = s.hasCfToken ? '•••••••• (saved, leave empty to keep)' : 'not set';
   const m = S.mail, g = $('#mailForm');
   for (const k of ['host', 'port', 'security', 'user', 'from', 'publicUrl', 'warnDays', 'extraRecipients']) g[k].value = m[k] ?? '';
   for (const k of ['notifyIssueOk', 'notifyIssueFail', 'notifyDeployOk', 'notifyDeployFail', 'notifyExpiry']) g[k].checked = !!m[k];
@@ -984,7 +1003,7 @@ async function testMail() {
 $('#setForm').onsubmit = async e => {
   e.preventDefault(); const f = e.target;
   if (await act('PUT', '/api/settings', 'Settings saved', {
-    email: f.email.value, cfToken: f.cfToken.value, keyType: f.keyType.value,
+    email: f.email.value, keyType: f.keyType.value,
     renewDays: +f.renewDays.value, checkHours: +f.checkHours.value,
     dnsResolvers: f.dnsResolvers.value, staging: f.staging.checked, require2faAll: f.require2fa.checked })) fillSettings();
 };
@@ -994,14 +1013,86 @@ function editCert(id) {
   const c = S.certs.find(c => c.id === id) || {}, f = $('#certForm');
   $('#certTitle').textContent = id ? 'Edit certificate' : 'Add certificate';
   f.id.value = c.id || ''; f.name.value = c.name || ''; f.domains.value = (c.domains || []).join('\n');
+  $('#certDns').innerHTML = '<option value="">Automatic (by domain)</option>' +
+    (S.dnsAccounts || []).map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
+  f.dnsAccountId.value = c.dnsAccountId || '';
+  certRoutePreview();
   $('#certDel').hidden = !id; $('#certDel').onclick = () => { certDlg.close(); delCert(id); };
   certDlg.showModal();
 }
 $('#certForm').onsubmit = async e => {
   e.preventDefault(); const f = e.target;
   if (await act('POST', '/api/certs', 'Saved – issuing in the background',
-    {id: f.id.value, name: f.name.value, domains: f.domains.value.split('\n')})) certDlg.close();
+    {id: f.id.value, name: f.name.value, domains: f.domains.value.split('\n'), dnsAccountId: f.dnsAccountId.value})) certDlg.close();
 };
+$('#certForm').domains.addEventListener('input', () => certRoutePreview());
+$('#certDns').addEventListener('change', () => certRoutePreview());
+
+// ---------- DNS accounts ----------
+// same rule as the server: the most specific zone (longest suffix) wins
+function zoneFor(name, accounts) {
+  name = name.toLowerCase().replace(/^\*\./, '').replace(/\.$/, '');
+  let best = null, zone = '';
+  for (const a of accounts) for (const z of a.zones || [])
+    if ((name === z || name.endsWith('.' + z)) && z.length > zone.length) { best = a; zone = z; }
+  return {account: best, zone};
+}
+function certRoutePreview() {
+  const f = $('#certForm'), accs = S.dnsAccounts || [], pick = f.dnsAccountId.value;
+  const names = f.domains.value.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+  if (!accs.length) { $('#certRoute').innerHTML = '<span class="warn">No DNS account yet – add a Cloudflare token under Settings → DNS accounts.</span>'; return; }
+  if (!names.length) { $('#certRoute').textContent = ''; return; }
+  const unknown = accs.filter(a => !(a.zones || []).length);
+  $('#certRoute').innerHTML = names.map(n => {
+    const pool = pick ? accs.filter(a => a.id === pick) : accs;
+    let {account} = zoneFor(n, pool);
+    if (!account && !pick && unknown.length === 1) account = unknown[0];
+    if (!account && pick && !(pool[0].zones || []).length) account = pool[0];
+    return account ? `${esc(n)} → <b>${esc(account.name)}</b>` : `<span class="err">${esc(n)} → no DNS account covers this zone</span>`;
+  }).join('<br>');
+}
+function dnsVia(c) {
+  const r = (S.dnsRoutes || {})[c.id];
+  if (!r) return '';
+  if (r.error) return `<div class="errtxt" title="${esc(r.error)}">${esc(r.error)}</div>`;
+  const names = [...new Set((r.routes || []).map(x => (S.dnsAccounts.find(a => a.id === x.accountId) || {}).name).filter(Boolean))];
+  return names.length ? `<div class="muted">via ${names.map(esc).join(', ')}</div>` : '';
+}
+function renderDNS() {
+  const rows = (S.dnsAccounts || []).map(a => `<tr>
+    <td class="main">${esc(a.name)}<div class="sub">Cloudflare</div></td>
+    ${cell('Zones', (a.zones || []).length ? a.zones.map(esc).join('<br>') : '<span class="muted">not checked yet</span>', 'small')}
+    ${cell('Status', a.lastError ? pill('err', 'Error') + `<div class="errtxt" title="${esc(a.lastError)}">${esc(a.lastError)}</div>`
+      : pill('ok', 'Working') + (hasT(a.zonesChecked) ? `<div class="sub">checked ${rel(a.zonesChecked)}</div>` : ''))}
+    <td class="adm acts-cell"><div class="acts"><button onclick="refreshDNS('${a.id}')">Refresh</button><button onclick="editDNS('${a.id}')">Edit</button></div></td></tr>`).join('');
+  $('#dnsRows').innerHTML = rows || emptyRow(4, 'gear', 'No DNS account yet.<div class="small">Add a Cloudflare API token to start issuing certificates.</div>');
+}
+function editDNS(id) {
+  const a = (S.dnsAccounts || []).find(x => x.id === id) || {}, f = $('#dnsForm');
+  $('#dnsTitle').textContent = id ? 'Edit DNS account' : 'Add Cloudflare token';
+  f.id.value = a.id || ''; f.name.value = a.name || ''; f.token.value = '';
+  f.token.required = !id;
+  $('#dnsTokenHint').textContent = id ? 'Saved – leave empty to keep the current token.' : '';
+  $('#dnsDel').hidden = !id;
+  $('#dnsDel').onclick = async () => {
+    if (confirm(`Delete DNS account "${a.name}"?`) && await act('DELETE', '/api/dns-accounts/' + id, 'DNS account deleted')) dnsDlg.close();
+  };
+  dnsDlg.showModal();
+}
+$('#dnsForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target, btn = f.querySelector('button.pri');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const r = await api('POST', '/api/dns-accounts', {id: f.id.value, name: f.name.value, token: f.token.value});
+    toast(r.zones?.length ? `Saved – this token manages ${r.zones.join(', ')}` : 'Saved');
+    dnsDlg.close(); refresh();
+  } catch (err) { toast(err.message, true); }
+  finally { btn.disabled = false; btn.textContent = 'Save'; }
+};
+async function refreshDNS(id) {
+  try { const z = await api('POST', `/api/dns-accounts/${id}/refresh`); toast('Zones: ' + (z.join(', ') || 'none')); refresh(); }
+  catch (e) { toast(e.message, true); refresh(); }
+}
 function delCert(id) {
   const c = S.certs.find(c => c.id === id);
   if (confirm(`Delete certificate "${c.name}"?`)) act('DELETE', '/api/certs/' + id, 'Deleted');

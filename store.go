@@ -16,7 +16,7 @@ import (
 type Settings struct {
 	Email        string `json:"email"`
 	Staging      bool   `json:"staging"`
-	CFToken      string `json:"cfToken,omitempty"`
+	CFToken      string `json:"cfToken,omitempty"`   // legacy (before DNS accounts), moved to DNSAccounts on start
 	KeyType      string `json:"keyType"`             // rsa2048 | rsa4096 | ec256 | ec384
 	RenewDays    int    `json:"renewDays"`           // renew when fewer days left
 	CheckHours   int    `json:"checkHours"`          // scheduler interval
@@ -59,11 +59,24 @@ type Token struct {
 	Expires   time.Time `json:"expires"`
 }
 
+// DNSAccount is a set of DNS credentials used for DNS-01 validation, e.g. one Cloudflare API token.
+// Several accounts let certificates use different tokens per zone (or per Cloudflare account).
+type DNSAccount struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Provider     string    `json:"provider"`        // "cloudflare" (more can be added later)
+	Token        string    `json:"token,omitempty"` // sealed
+	Zones        []string  `json:"zones"`           // zones the token can manage, as reported by the provider
+	ZonesChecked time.Time `json:"zonesChecked,omitzero"`
+	LastError    string    `json:"lastError,omitempty"`
+}
+
 // Cert is one ACME certificate (may contain several names / a wildcard).
 type Cert struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
 	Domains []string `json:"domains"`
+	DNSID   string   `json:"dnsAccountId,omitempty"` // "" = pick the DNS account by domain
 
 	// status, maintained by the app
 	Fingerprint string    `json:"fingerprint,omitempty"`
@@ -134,12 +147,13 @@ type User struct {
 }
 
 type Config struct {
-	Settings Settings     `json:"settings"`
-	Certs    []*Cert      `json:"certs"`
-	Routers  []*Router    `json:"routers"`
-	Users    []*User      `json:"users"`
-	Mail     MailSettings `json:"mail"`
-	Tokens   []*Token     `json:"tokens"`
+	Settings Settings      `json:"settings"`
+	Certs    []*Cert       `json:"certs"`
+	Routers  []*Router     `json:"routers"`
+	Users    []*User       `json:"users"`
+	Mail     MailSettings  `json:"mail"`
+	DNS      []*DNSAccount `json:"dnsAccounts"`
+	Tokens   []*Token      `json:"tokens"`
 }
 
 // pruneTokens drops expired tokens.
@@ -151,6 +165,15 @@ func (c *Config) pruneTokens() {
 		}
 	}
 	c.Tokens = out
+}
+
+func (c Config) dnsAccount(id string) *DNSAccount {
+	for _, x := range c.DNS {
+		if x.ID == id {
+			return x
+		}
+	}
+	return nil
 }
 
 func (c Config) user(id string) *User {
@@ -273,7 +296,11 @@ func (s *Store) Snapshot() Config {
 func (s *Store) SealSecrets(sl *sealer) (int, error) {
 	n := 0
 	err := s.Update(func(c *Config) error {
-		for _, p := range []*string{&c.Settings.CFToken, &c.Mail.Password} {
+		ps := []*string{&c.Settings.CFToken, &c.Mail.Password}
+		for _, a := range c.DNS {
+			ps = append(ps, &a.Token)
+		}
+		for _, p := range ps {
 			if *p != "" && !isSealed(*p) {
 				*p = sl.seal(*p)
 				n++
