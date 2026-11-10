@@ -156,3 +156,26 @@ func withBasePath(base string, h http.Handler) http.Handler {
 		}
 	})
 }
+
+// untrustedProxy reports the peer address when a request carries a reverse proxy's
+// X-Forwarded-* headers but comes from an address that isn't in TRUSTED_PROXIES.
+// Those headers are then ignored, which e.g. makes the app think it runs on plain http.
+func (p proxyTrust) untrustedProxy(r *http.Request) (string, bool) {
+	if r.Header.Get("X-Forwarded-For") == "" && r.Header.Get("X-Forwarded-Proto") == "" && r.Header.Get("X-Real-IP") == "" {
+		return "", false
+	}
+	peer, ok := peerAddr(r)
+	if !ok || p.trusted(peer) {
+		return "", false
+	}
+	return peer.String(), true
+}
+
+// proxyHint is a ready-to-use explanation for an untrusted proxy, or "".
+func (p proxyTrust) proxyHint(r *http.Request) string {
+	peer, ok := p.untrustedProxy(r)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("Your reverse proxy at %s isn't trusted yet, so its HTTPS and client-address headers are ignored. Set TRUSTED_PROXIES=%s on the container (see Running behind a reverse proxy).", peer, peer)
+}

@@ -186,8 +186,20 @@ labels:
   - traefik.http.services.rosacme.loadbalancer.server.port=8080
 ```
 
-To find the address to trust, look at the log line `login failed ... from <ip>` (or `setup: ... from <ip>`).
-If it shows the proxy's IP instead of yours, `TRUSTED_PROXIES` is missing or wrong.
+**Not sure which address to trust?** The app notices when requests carry a proxy's headers from an address that
+isn't trusted. Admins then see a warning at the top of **Settings** with the exact `TRUSTED_PROXIES=…` value, and the
+log says the same once. After fixing it, sign-in log lines show your real client address instead of the proxy's.
+
+Proxies in **host-network mode** (for example Nginx Proxy Manager on a NAS) reach the container through Docker's
+gateway, such as `172.29.20.1`, which can change if the stack's network is recreated. Publish the port on localhost
+only and trust the Docker range:
+
+```yaml
+    ports:
+      - "127.0.0.1:8080:8080"        # only the host (the proxy) can connect
+    environment:
+      TRUSTED_PROXIES: 172.29.0.0/16  # the gateway range the proxy arrives from
+```
 
 ## Users and roles
 

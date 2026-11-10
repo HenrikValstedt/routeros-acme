@@ -384,6 +384,7 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
   </section>
   <section id="t-settings" hidden>
     <div class="ph"><div><h2>Settings</h2><p>Certificate authority, DNS provider and e-mail.</p></div></div>
+    <div class="info warnbox adm" id="proxyHint" hidden></div>
     <form class="card" id="setForm"><fieldset id="setFs">
       <div class="row"><h2>Let's Encrypt</h2><span class="pill muted" id="roNote" hidden>Read-only</span></div>
       <div class="grid">
@@ -1001,6 +1002,8 @@ function render() {
   $('#statusTxt').textContent = S.busy ? 'Working…' : 'Idle';
   renderStats();
   renderDNS();
+  $('#proxyHint').hidden = !S.proxyHint;
+  $('#proxyHint').innerHTML = S.proxyHint ? `<b>Reverse proxy not trusted.</b> ${esc(S.proxyHint)}` : '';
   $('#certRows').innerHTML = S.certs.length ? S.certs.map(c => `<tr>
     <td class="main">${esc(c.name)}</td>
     ${cell('Domains', c.domains.map(esc).join('<br>') + dnsVia(c), 'small')}

@@ -128,3 +128,43 @@ func TestBasePathAndCookies(t *testing.T) {
 		t.Error("client IP from X-Forwarded-For not used in log")
 	}
 }
+
+func TestUntrustedProxyHint(t *testing.T) {
+	p, _ := parseTrustedProxies("10.0.0.1")
+	none, _ := parseTrustedProxies("")
+	r := reqFrom("172.29.20.1:5555", map[string]string{"X-Forwarded-Proto": "https", "X-Forwarded-For": "192.168.1.50"})
+	if peer, ok := none.untrustedProxy(r); !ok || peer != "172.29.20.1" {
+		t.Fatalf("untrusted proxy not detected: %q %v", peer, ok)
+	}
+	if h := none.proxyHint(r); !strings.Contains(h, "TRUSTED_PROXIES=172.29.20.1") {
+		t.Fatal(h)
+	}
+	if _, ok := p.untrustedProxy(reqFrom("10.0.0.1:1", map[string]string{"X-Forwarded-Proto": "https"})); ok {
+		t.Fatal("a trusted proxy must not be reported")
+	}
+	if _, ok := none.untrustedProxy(reqFrom("192.168.1.50:1", nil)); ok {
+		t.Fatal("a direct visitor (no proxy headers) must not be reported")
+	}
+
+	// passkeys explain the fix, and the log warns once per address
+	a, srv := newTestApp(t)
+	_ = srv
+	if _, _, err := a.relyingParty(func() *http.Request {
+		x := reqFrom("172.29.20.1:5555", map[string]string{"X-Forwarded-Proto": "https"})
+		x.Host = "certs.example.com"
+		return x
+	}()); err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES=172.29.20.1") {
+		t.Fatalf("passkey reason: %v", err)
+	}
+	a.warnProxyOnce("172.29.20.1")
+	a.warnProxyOnce("172.29.20.1")
+	n := 0
+	for _, l := range a.mgr.Logs() {
+		if strings.Contains(l.Msg, "isn't in TRUSTED_PROXIES") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("warned %d times, want once", n)
+	}
+}

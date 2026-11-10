@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	_ "time/tzdata" // TZ support in a scratch image
@@ -46,6 +47,8 @@ type app struct {
 	cookieSecure bool       // COOKIE_SECURE=true forces the Secure cookie flag
 
 	otpFresh time.Duration // how long an entered 2FA code counts for sensitive actions (OTP_FRESH_MINUTES)
+
+	proxyWarned sync.Map // peer addresses already warned about (untrusted reverse proxy)
 }
 
 func env(k, def string) string {
@@ -306,6 +309,9 @@ func (a *app) routes() http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+		if peer, ok := a.proxy.untrustedProxy(r); ok {
+			a.warnProxyOnce(peer) // once per address, for every kind of request
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			// JSON-only API: blocks cross-site form posts (CSRF).
 			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
@@ -316,6 +322,13 @@ func (a *app) routes() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// warnProxyOnce logs, once per address, that a reverse proxy isn't trusted.
+func (a *app) warnProxyOnce(peer string) {
+	if _, loaded := a.proxyWarned.LoadOrStore(peer, true); !loaded {
+		a.mgr.logf("warning: requests from %s carry reverse-proxy headers, but that address isn't in TRUSTED_PROXIES, so the headers are ignored (client addresses and HTTPS aren't seen). Set TRUSTED_PROXIES=%s", peer, peer)
+	}
 }
 
 func (a *app) devName(id string) string {
@@ -363,7 +376,7 @@ func (a *app) getState(w http.ResponseWriter, r *http.Request) {
 		"settings": sv, "certs": cfg.Certs, "routers": routers, "mail": mailViewOf(cfg.Mail),
 		"dnsAccounts": dnsViews(cfg), "dnsRoutes": certRoutes(cfg),
 		"busy": a.mgr.Busy(), "now": time.Now(), "me": viewOf(currentUser(r)), "version": version,
-		"myPasskeys": passkeyViews(currentUser(r)),
+		"myPasskeys": passkeyViews(currentUser(r)), "proxyHint": a.proxy.proxyHint(r),
 	})
 }
 

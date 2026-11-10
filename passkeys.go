@@ -67,6 +67,9 @@ func (a *app) relyingParty(r *http.Request) (*webauthn.WebAuthn, string, error) 
 	case net.ParseIP(hostname) != nil:
 		return nil, "", errors.New("passkeys need a host name such as certs.example.com, not an IP address")
 	case !https && hostname != "localhost":
+		if hint := a.proxy.proxyHint(r); hint != "" {
+			return nil, "", errors.New("passkeys need HTTPS. " + hint)
+		}
 		return nil, "", errors.New("passkeys need HTTPS – open RouterOS ACME through its https:// address (see Running behind a reverse proxy)")
 	}
 	scheme := "https"
