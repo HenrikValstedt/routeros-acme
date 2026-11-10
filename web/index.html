@@ -1089,12 +1089,20 @@ $('#mailForm').onsubmit = async e => {
   for (const k of ['notifyIssueOk', 'notifyIssueFail', 'notifyDeployOk', 'notifyDeployFail', 'notifyExpiry']) body[k] = g[k].checked;
   if (await act('PUT', '/api/mail', 'E-mail settings saved', body)) fillSettings();
 };
+// tests what's in the form right now, saved or not (nothing is stored)
 async function testMail() {
+  const g = $('#mailForm'), m = S.mail || {};
+  const settings = {host: g.host.value, port: +g.port.value, security: g.security.value, user: g.user.value,
+    password: g.password.value, from: g.from.value};
+  const unsaved = settings.password !== '' || ['host', 'port', 'security', 'user', 'from']
+    .some(k => String(settings[k] ?? '') !== String(m[k] ?? ''));
   const to = prompt('Send a test e-mail to:', me.email || '');
   if (to === null) return;
   toast('Sending…');
-  try { toast('Test e-mail ' + await api('POST', '/api/mail/test', {to})); }
-  catch (e) { toast(e.message + ' (did you save the settings first?)', true); }
+  try {
+    const r = await api('POST', '/api/mail/test', {to, settings});
+    toast('Test e-mail ' + r + (unsaved ? ' – these settings aren\'t saved yet, click Save e-mail settings to keep them' : ''));
+  } catch (e) { toast(e.message, true); }
 }
 $('#setForm').onsubmit = async e => {
   e.preventDefault(); const f = e.target;

@@ -113,7 +113,9 @@ DNS for each zone. Add them under **Settings → DNS accounts**:
 
 ## E-mail: notifications, invitations, password reset
 
-Configure SMTP under **Settings → E-mail & notifications** and use **Send test e-mail** to check it.
+Configure SMTP under **Settings → E-mail & notifications** and use **Send test e-mail** to check it. The test uses
+what's in the form, so you can test before saving. Nothing is stored until you click **Save e-mail settings**. With
+the password field left empty, the saved password is used, but only for the same server and username.
 
 | Security | Typical port | Notes |
 |----------|--------------|-------|

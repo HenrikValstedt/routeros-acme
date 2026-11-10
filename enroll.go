@@ -88,6 +88,39 @@ func mailViewOf(m MailSettings) mailView {
 	return v
 }
 
+// validateMail checks and normalises SMTP settings. full also checks the fields that only
+// matter when saving (public URL, recipients, warning days).
+func validateMail(in *MailSettings, full bool) error {
+	in.Host, in.User = strings.TrimSpace(in.Host), strings.TrimSpace(in.User)
+	var err error
+	if in.From, err = parseEmail(in.From); err != nil {
+		return fmt.Errorf("from: %w", err)
+	}
+	switch {
+	case in.Host != "" && in.From == "":
+		return errors.New("from address is required")
+	case in.Port < 1 || in.Port > 65535:
+		return errors.New("invalid port")
+	case in.Security != "starttls" && in.Security != "tls" && in.Security != "none":
+		return errors.New("security must be starttls, tls or none")
+	}
+	if !full {
+		return nil
+	}
+	if in.PublicURL, err = normalizePublicURL(in.PublicURL); err != nil {
+		return err
+	}
+	for _, x := range splitList(in.ExtraRecipients) {
+		if _, err := parseEmail(x); err != nil {
+			return err
+		}
+	}
+	if in.WarnDays < 1 || in.WarnDays > 60 {
+		return errors.New("warning days must be 1-60")
+	}
+	return nil
+}
+
 func (a *app) putMail(w http.ResponseWriter, r *http.Request) {
 	var in MailSettings
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -97,37 +130,11 @@ func (a *app) putMail(w http.ResponseWriter, r *http.Request) {
 	if in.Password != "" && !a.requireFresh(w, r) {
 		return
 	}
-	in.Host, in.User = strings.TrimSpace(in.Host), strings.TrimSpace(in.User)
-	var err error
-	if in.From, err = parseEmail(in.From); err != nil {
-		fail(w, 400, fmt.Errorf("from: %w", err))
-		return
-	}
-	if in.PublicURL, err = normalizePublicURL(in.PublicURL); err != nil {
+	if err := validateMail(&in, true); err != nil {
 		fail(w, 400, err)
 		return
 	}
-	for _, x := range splitList(in.ExtraRecipients) {
-		if _, err := parseEmail(x); err != nil {
-			fail(w, 400, err)
-			return
-		}
-	}
-	switch {
-	case in.Host != "" && in.From == "":
-		fail(w, 400, errors.New("from address is required"))
-		return
-	case in.Port < 1 || in.Port > 65535:
-		fail(w, 400, errors.New("invalid port"))
-		return
-	case in.Security != "starttls" && in.Security != "tls" && in.Security != "none":
-		fail(w, 400, errors.New("security must be starttls, tls or none"))
-		return
-	case in.WarnDays < 1 || in.WarnDays > 60:
-		fail(w, 400, errors.New("warning days must be 1-60"))
-		return
-	}
-	err = a.store.Update(func(c *Config) error {
+	err := a.store.Update(func(c *Config) error {
 		pw := c.Mail.Password
 		if in.Password != "" {
 			pw = a.mgr.sealer.seal(in.Password) // stored encrypted
@@ -150,7 +157,8 @@ func (a *app) putMail(w http.ResponseWriter, r *http.Request) {
 func (a *app) testMail(w http.ResponseWriter, r *http.Request) {
 	me := currentUser(r)
 	var in struct {
-		To string `json:"to"`
+		To       string        `json:"to"`
+		Settings *MailSettings `json:"settings"` // what's in the form, saved or not; nothing is stored
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	to, err := parseEmail(in.To)
@@ -161,7 +169,27 @@ func (a *app) testMail(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, errors.New("enter a recipient (or set an e-mail address on your account)"))
 		return
 	}
-	ms := a.store.Snapshot().Mail
+	saved := a.store.Snapshot().Mail
+	ms := saved
+	if in.Settings != nil {
+		ms = *in.Settings
+		if err := validateMail(&ms, false); err != nil {
+			fail(w, 400, err)
+			return
+		}
+		if !ms.configured() {
+			fail(w, 400, errors.New("fill in the SMTP server and from address"))
+			return
+		}
+		switch {
+		case ms.Password != "":
+			ms.Password = a.mgr.sealer.seal(ms.Password) // typed in the form: used for this test only
+		case ms.User != "" && ms.User == saved.User && ms.Host == saved.Host && ms.Port == saved.Port:
+			ms.Password = saved.Password // unchanged server and user: reuse the saved password
+		default:
+			ms.Password = "" // never send the saved password to a different server or user
+		}
+	}
 	body := fmt.Sprintf("This is a test message from RouterOS ACME, sent by %s.\n\nIf you can read this, e-mail delivery works.\n", me.Username)
 	if err := a.mgr.send(ms, []string{to}, "[RouterOS ACME] Test e-mail", body); err != nil {
 		a.mgr.logf("test e-mail to %s failed: %v", to, err)

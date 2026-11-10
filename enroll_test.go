@@ -267,3 +267,44 @@ func TestNotifications(t *testing.T) {
 		t.Fatal("failure after success not sent")
 	}
 }
+
+func TestTestMailUsesFormSettings(t *testing.T) {
+	a, srv := newTestApp(t)
+	admin := newClient(t, srv)
+	admin.expect(200, "POST", "/api/setup", map[string]string{"code": a.setupCode, "username": "boss", "password": "supersecret"})
+	admin.turnOn2FA()
+	var got []MailSettings
+	a.mgr.mailer = func(ms MailSettings, _ []string, _, _ string) error { got = append(got, ms); return nil }
+	form := func(host, user, pw string) map[string]any {
+		return map[string]any{"to": "boss@example.org", "settings": map[string]any{"host": host, "port": 465, "security": "tls", "user": user, "password": pw, "from": "boss@example.org"}}
+	}
+	// nothing saved yet: the form is tested as is, and nothing is stored
+	admin.expect(200, "POST", "/api/mail/test", form("smtppro.zoho.eu", "boss@example.org", "app-pw-1"))
+	if got[0].Host != "smtppro.zoho.eu" || got[0].Password != "app-pw-1" {
+		t.Fatalf("tested %+v", got[0])
+	}
+	if a.store.Snapshot().Mail.Host != "" {
+		t.Fatal("a test must not save anything")
+	}
+	admin.expect(400, "POST", "/api/mail/test", map[string]any{"to": "boss@example.org", "settings": map[string]any{"host": "", "port": 465, "security": "tls"}})
+
+	// saved password is reused only for the same server and user
+	admin.expect(200, "PUT", "/api/mail", map[string]any{"host": "smtppro.zoho.eu", "port": 465, "security": "tls", "user": "boss@example.org", "password": "saved-pw", "from": "boss@example.org", "warnDays": 14})
+	admin.expect(200, "POST", "/api/mail/test", form("smtppro.zoho.eu", "boss@example.org", ""))
+	if got[1].Password != "saved-pw" {
+		t.Fatalf("saved password not reused: %q", got[1].Password)
+	}
+	admin.expect(200, "POST", "/api/mail/test", form("evil.example.net", "boss@example.org", ""))
+	if got[2].Password != "" {
+		t.Fatal("the saved password must never go to a different server")
+	}
+	admin.expect(200, "POST", "/api/mail/test", form("smtppro.zoho.eu", "other@example.org", ""))
+	if got[3].Password != "" {
+		t.Fatal("the saved password must never be used for a different user")
+	}
+	// without settings in the request, the saved ones are used (older UI)
+	admin.expect(200, "POST", "/api/mail/test", map[string]any{"to": "boss@example.org"})
+	if got[4].Host != "smtppro.zoho.eu" || got[4].Password != "saved-pw" {
+		t.Fatalf("saved settings: %+v", got[4])
+	}
+}
