@@ -1,0 +1,4 @@
+data/
+dist/
+/routeros-acme
+*.test

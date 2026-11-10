@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RouterOS ACME screenshots</title>
+<style>
+:root{--bg:#f6f7fb;--card:#fff;--fg:#0f172a;--muted:#64748b;--line:#e6e8f0;--acc:#4f46e5}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0f17;--card:#121826;--fg:#e5e7eb;--muted:#94a3b8;--line:#1f2937;--acc:#818cf8}}
+*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--fg)}
+main{max-width:1240px;margin:0 auto;padding:28px 16px 60px}h1{margin:0;font-size:26px;letter-spacing:-.02em}
+p{color:var(--muted);margin:6px 0 0}h2{margin:36px 0 14px;font-size:19px}
+.grid{display:grid;gap:18px}.desk{grid-template-columns:repeat(auto-fill,minmax(360px,1fr))}.phone{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+a{display:block;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;color:inherit;text-decoration:none;
+  box-shadow:0 1px 2px rgb(0 0 0/.04),0 4px 16px rgb(0 0 0/.05);transition:transform .15s,box-shadow .15s}
+a:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgb(0 0 0/.12)}
+img{display:block;width:100%;height:auto;border-bottom:1px solid var(--line)}
+span{display:block;padding:10px 12px;font-size:13.5px;font-weight:600}
+@media (max-width:420px){.desk{grid-template-columns:1fr}.phone{grid-template-columns:1fr 1fr}}
+</style></head><body><main>
+<h1>RouterOS ACME – screenshots</h1>
+<p>Regular browser (1280×860) and phone (390×844). Demo data; the enrollment screens and log are a real run against a RouterOS 7.25.1 test VM. Click an image to open it full size.</p>
+<h2>Desktop</h2><div class="grid desk">
+<a class="d" href="desktop-01-login.png" target="_blank"><img src="desktop-01-login.png" alt="Login" loading="lazy"><span>Login</span></a>
+<a class="d" href="desktop-02-certificates.png" target="_blank"><img src="desktop-02-certificates.png" alt="Certificates" loading="lazy"><span>Certificates</span></a>
+<a class="d" href="desktop-03-devices.png" target="_blank"><img src="desktop-03-devices.png" alt="Devices" loading="lazy"><span>Devices</span></a>
+<a class="d" href="desktop-04-device-details.png" target="_blank"><img src="desktop-04-device-details.png" alt="Device details" loading="lazy"><span>Device details</span></a>
+<a class="d" href="desktop-05-settings.png" target="_blank"><img src="desktop-05-settings.png" alt="Settings" loading="lazy"><span>Settings</span></a>
+<a class="d" href="desktop-06-users.png" target="_blank"><img src="desktop-06-users.png" alt="Users" loading="lazy"><span>Users</span></a>
+<a class="d" href="desktop-07-invite.png" target="_blank"><img src="desktop-07-invite.png" alt="Invite" loading="lazy"><span>Invite</span></a>
+<a class="d" href="desktop-08-enroll-1-connect.png" target="_blank"><img src="desktop-08-enroll-1-connect.png" alt="Enroll device – 1. connect" loading="lazy"><span>Enroll device – 1. connect</span></a>
+<a class="d" href="desktop-09-enroll-2-review.png" target="_blank"><img src="desktop-09-enroll-2-review.png" alt="Enroll device – 2. review &amp; confirm" loading="lazy"><span>Enroll device – 2. review &amp; confirm</span></a>
+<a class="d" href="desktop-10-enroll-3-result.png" target="_blank"><img src="desktop-10-enroll-3-result.png" alt="Enroll device – 3. result" loading="lazy"><span>Enroll device – 3. result</span></a>
+<a class="d" href="desktop-11-log.png" target="_blank"><img src="desktop-11-log.png" alt="Log" loading="lazy"><span>Log</span></a>
+<a class="d" href="desktop-12-certificates-dark.png" target="_blank"><img src="desktop-12-certificates-dark.png" alt="Certificates (dark mode)" loading="lazy"><span>Certificates (dark mode)</span></a>
+<a class="d" href="desktop-13-devices-dark.png" target="_blank"><img src="desktop-13-devices-dark.png" alt="Devices (dark mode)" loading="lazy"><span>Devices (dark mode)</span></a>
+<a class="d" href="desktop-14-devices-after-enroll.png" target="_blank"><img src="desktop-14-devices-after-enroll.png" alt="Devices after enroll" loading="lazy"><span>Devices after enroll</span></a>
+</div>
+<h2>Phone</h2><div class="grid phone">
+<a class="p" href="phone-01-login.png" target="_blank"><img src="phone-01-login.png" alt="Login" loading="lazy"><span>Login</span></a>
+<a class="p" href="phone-02-certificates.png" target="_blank"><img src="phone-02-certificates.png" alt="Certificates" loading="lazy"><span>Certificates</span></a>
+<a class="p" href="phone-03-devices.png" target="_blank"><img src="phone-03-devices.png" alt="Devices" loading="lazy"><span>Devices</span></a>
+<a class="p" href="phone-04-device-details.png" target="_blank"><img src="phone-04-device-details.png" alt="Device details" loading="lazy"><span>Device details</span></a>
+<a class="p" href="phone-05-settings.png" target="_blank"><img src="phone-05-settings.png" alt="Settings" loading="lazy"><span>Settings</span></a>
+<a class="p" href="phone-06-users.png" target="_blank"><img src="phone-06-users.png" alt="Users" loading="lazy"><span>Users</span></a>
+<a class="p" href="phone-07-my-account.png" target="_blank"><img src="phone-07-my-account.png" alt="My account" loading="lazy"><span>My account</span></a>
+<a class="p" href="phone-08-enroll-1-connect.png" target="_blank"><img src="phone-08-enroll-1-connect.png" alt="Enroll device – 1. connect" loading="lazy"><span>Enroll device – 1. connect</span></a>
+<a class="p" href="phone-09-enroll-2-review.png" target="_blank"><img src="phone-09-enroll-2-review.png" alt="Enroll device – 2. review &amp; confirm" loading="lazy"><span>Enroll device – 2. review &amp; confirm</span></a>
+<a class="p" href="phone-10-enroll-3-result.png" target="_blank"><img src="phone-10-enroll-3-result.png" alt="Enroll device – 3. result" loading="lazy"><span>Enroll device – 3. result</span></a>
+<a class="p" href="phone-11-certificates-dark.png" target="_blank"><img src="phone-11-certificates-dark.png" alt="Certificates (dark mode)" loading="lazy"><span>Certificates (dark mode)</span></a>
+<a class="p" href="phone-12-devices-dark.png" target="_blank"><img src="phone-12-devices-dark.png" alt="Devices (dark mode)" loading="lazy"><span>Devices (dark mode)</span></a>
+</div>
+</main></body></html>

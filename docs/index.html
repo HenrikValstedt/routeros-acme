@@ -1,0 +1,472 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RouterOS ACME</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Let's Encrypt certificates for MikroTik routers, managed from a web UI.">
+<style>
+/* Layout: a single reading column (max 1080px) with full-width tinted bands; screenshots framed like windows / phones. */
+:root{
+  --bg:#f6f7fb; --band:#eef0f8; --card:#ffffff; --fg:#111827; --muted:#5b6478; --line:#e3e6ef;
+  --accent:#4f46e5; --accent-soft:#eef2ff; --accent-fg:#ffffff; --ok:#047857; --ok-soft:#e8f7f0;
+  --code-bg:#0f1424; --code-fg:#d6dcf0; --code-dim:#7f8bad; --code-key:#a5b4fc; --shadow:0 1px 2px rgb(17 24 39/.05),0 10px 30px rgb(17 24 39/.08);
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0b0f17; --band:#0f1522; --card:#131a29; --fg:#e6e8ef; --muted:#9aa4ba; --line:#222c3d;
+  --accent:#8b93fb; --accent-soft:#1d1b45; --accent-fg:#0b0f17; --ok:#34d399; --ok-soft:#06281d;
+  --code-bg:#080b13; --code-fg:#d6dcf0; --code-dim:#6f7a99; --code-key:#a5b4fc; --shadow:0 1px 2px rgb(0 0 0/.35),0 12px 34px rgb(0 0 0/.35); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0b0f17; --band:#0f1522; --card:#131a29; --fg:#e6e8ef; --muted:#9aa4ba; --line:#222c3d;
+  --accent:#8b93fb; --accent-soft:#1d1b45; --accent-fg:#0b0f17; --ok:#34d399; --ok-soft:#06281d;
+  --code-bg:#080b13; --code-fg:#d6dcf0; --code-dim:#6f7a99; --code-key:#a5b4fc; --shadow:0 1px 2px rgb(0 0 0/.35),0 12px 34px rgb(0 0 0/.35); color-scheme:dark}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 var(--font);-webkit-font-smoothing:antialiased}
+img{max-width:100%;height:auto;display:block}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+h1,h2,h3{text-wrap:balance;letter-spacing:-.02em;line-height:1.2;margin:0}
+h2{font-size:clamp(26px,3.2vw,34px)}
+h3{font-size:19px;letter-spacing:-.01em}
+p{margin:0}
+code,.mono{font-family:var(--mono);font-size:.88em}
+.wrap{max-width:1080px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.band{background:var(--band);border-block:1px solid var(--line)}
+section{padding-block:72px}
+.eyebrow{font-size:12.5px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--accent)}
+.lede{color:var(--muted);font-size:17.5px;max-width:62ch}
+.head{display:grid;gap:10px;margin-bottom:34px}
+
+/* top bar */
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--card)}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:9;background:color-mix(in srgb,var(--card) 86%,transparent);
+  backdrop-filter:saturate(1.5) blur(12px);-webkit-backdrop-filter:saturate(1.5) blur(12px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:22px;height:58px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;text-decoration:none;color:var(--fg)}
+.brand b{color:var(--accent)}
+.logo{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--accent);color:var(--accent-fg)}
+.logo svg{width:17px;height:17px}
+.top nav{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-left:auto}
+.top nav::-webkit-scrollbar{display:none}
+.top nav a{color:var(--muted);text-decoration:none;font-size:14px;font-weight:600;padding:6px 10px;border-radius:8px;white-space:nowrap}
+.top nav a:hover{color:var(--fg);background:var(--accent-soft)}
+
+/* hero */
+.hero{padding-block:64px 72px}
+.hero .wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:48px;align-items:center}
+.hero h1{font-size:clamp(34px,5vw,54px);letter-spacing:-.035em}
+.hero h1 span{color:var(--accent)}
+.hero .lede{margin-top:18px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+.chip{font-size:13px;font-weight:600;padding:5px 11px;border-radius:99px;background:var(--card);border:1px solid var(--line);color:var(--muted)}
+.cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}
+.btn{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 18px;border-radius:11px;font-weight:650;font-size:15px;text-decoration:none;
+  border:1px solid var(--line);background:var(--card);color:var(--fg)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.stage{position:relative;padding-bottom:40px;min-width:0}
+.win{border-radius:14px;overflow:hidden;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow)}
+.win .bar{display:flex;gap:6px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--band)}
+.win .bar i{width:10px;height:10px;border-radius:50%;background:var(--line)}
+.phone{border-radius:26px;overflow:hidden;border:6px solid var(--fg);background:var(--card);box-shadow:var(--shadow)}
+.stage .phone{position:absolute;right:-8px;bottom:0;width:30%;max-width:190px}
+.zoom{cursor:zoom-in}
+
+/* features */
+.features{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.feat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;display:grid;gap:8px;align-content:start}
+.feat .ic{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);margin-bottom:4px}
+.feat .ic svg{width:20px;height:20px}
+.feat p{color:var(--muted);font-size:15px}
+
+/* flow diagram */
+.diagram{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;overflow-x:auto}
+.diagram svg{display:block;width:100%;min-width:760px;height:auto}
+.diagram .box{fill:var(--band);stroke:var(--line);stroke-width:1.5}
+.diagram .box.me{fill:var(--accent-soft);stroke:var(--accent);stroke-width:2}
+.diagram .t{fill:var(--fg);font:700 16px var(--font)}
+.diagram .s{fill:var(--muted);font:500 12.5px var(--font)}
+.diagram .lbl{fill:var(--accent);font:700 12.5px var(--font)}
+.diagram .ln{stroke:var(--accent);stroke-width:2;fill:none}
+.diagram .ln.d{stroke-dasharray:6 6;stroke:var(--muted)}
+.diagram .ar{fill:var(--accent)}
+.diagram .ar.m{fill:var(--muted)}
+.flowlist{display:none}
+.legend{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:22px;counter-reset:f}
+.legend div{font-size:14.5px;color:var(--muted)}
+.legend b{display:block;color:var(--fg);font-size:15px;margin-bottom:2px}
+.legend b::before{counter-increment:f;content:counter(f);display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;
+  background:var(--accent);color:var(--accent-fg);font-size:12px;margin-right:8px;vertical-align:1px}
+
+/* steps */
+.steps{display:grid;gap:64px;counter-reset:s}
+.step{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:40px;align-items:start}
+.step .txt{display:grid;gap:12px;position:sticky;top:90px}
+.step .num{counter-increment:s;font:800 14px var(--font);color:var(--accent);letter-spacing:.06em}
+.step .num::before{content:"STEP " counter(s)}
+.step p,.step li{color:var(--muted);font-size:15.5px}
+.step ul{margin:0;padding-left:20px;display:grid;gap:6px}
+.trio{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.trio figure{margin:0}
+figcaption{font-size:13px;color:var(--muted);margin-top:8px;text-align:center}
+.pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+
+/* code */
+.code{position:relative;background:var(--code-bg);color:var(--code-fg);border-radius:12px;font-family:var(--mono);font-size:13.5px;line-height:1.7;min-width:0}
+.code pre{margin:0;padding:16px 18px;overflow-x:auto;white-space:pre}
+.code .c{color:var(--code-dim)}.code .k{color:var(--code-key)}
+.copy{position:absolute;top:8px;right:8px;height:30px;padding:0 10px;border-radius:8px;border:1px solid #2a3350;background:#1a2138;color:var(--code-fg);
+  font:600 12px var(--font);cursor:pointer}
+.copy:hover{background:#232c49}
+
+/* security */
+.guards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.guard{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
+.guard .tick{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--ok-soft);color:var(--ok)}
+.guard .tick svg{width:15px;height:15px}
+.guard b{display:block;margin-bottom:3px}
+.guard p{color:var(--muted);font-size:14.5px}
+.changes{margin-top:26px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+.changes h3{margin-bottom:10px}
+.changes ul{margin:0;padding-left:20px;color:var(--muted);display:grid;gap:6px;font-size:15px}
+
+/* daily */
+.daily{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;display:grid;gap:8px;align-content:start}
+.tile .big{font:800 30px var(--font);letter-spacing:-.03em;color:var(--accent);font-variant-numeric:tabular-nums}
+.tile p{color:var(--muted);font-size:15px}
+
+/* phones */
+.phones{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px}
+.phones figure{margin:0}
+
+/* reference */
+.tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:14px}
+table{width:100%;border-collapse:collapse;font-size:14.5px}
+th,td{text-align:left;padding:11px 16px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:var(--band)}
+td:first-child{white-space:nowrap;font-family:var(--mono);font-size:13px;color:var(--accent)}
+td:nth-child(2){white-space:nowrap;font-family:var(--mono);font-size:13px;color:var(--muted)}
+.refgrid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:20px;align-items:start}
+.notes{display:grid;gap:12px}
+.note{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;font-size:14.5px;color:var(--muted)}
+.note b{color:var(--fg);display:block;margin-bottom:2px}
+
+footer{padding-block:36px;color:var(--muted);font-size:14px;border-top:1px solid var(--line)}
+footer .wrap{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+
+/* lightbox */
+.lb{position:fixed;inset:0;z-index:50;background:rgb(3 6 15/.82);display:grid;place-items:center;cursor:zoom-out;
+  padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.lb img{max-height:100%;max-width:100%;width:auto;border-radius:10px;box-shadow:0 30px 80px rgb(0 0 0/.5)}
+
+@media (max-width:900px){
+  .hero .wrap,.step,.changes,.refgrid{grid-template-columns:minmax(0,1fr)}
+  .step .txt{position:static}
+  .features,.daily{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .phones{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .legend{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:620px){
+  section{padding-block:52px}
+  .top nav{display:none}
+  .features,.daily,.guards,.legend{grid-template-columns:minmax(0,1fr)}
+  .phones{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .trio{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .pair{grid-template-columns:minmax(0,1fr)}
+  .diagram{display:none}
+  .flowlist{display:grid}
+  .stage .phone{width:34%;right:0}
+}
+.flowlist{gap:10px;margin:0;padding:0;list-style:none;counter-reset:fl}
+.flowlist li{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;font-size:15px;color:var(--muted)}
+.flowlist b{display:block;color:var(--fg)}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth;scroll-padding-top:70px}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-cert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M7 8h10M7 11h6"/><circle cx="16" cy="17" r="3"/></symbol>
+  <symbol id="i-router" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h.01M11 16.5h.01M17 13V9M8.5 8.5a5 5 0 017 0M6 6a8.5 8.5 0 0112 0"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0113 0M16 4.5a3.5 3.5 0 010 7M18 14a5.5 5.5 0 013.5 6"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></symbol>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#overview"><span class="logo"><svg><use href="#i-shield"/></svg></span><span>RouterOS <b>ACME</b></span></a>
+    <nav aria-label="Sections">
+      <a href="#features">Features</a><a href="#flow">How it works</a><a href="#start">Get started</a>
+      <a href="#security">Security</a><a href="#daily">Day to day</a><a href="#mobile">Mobile</a><a href="#reference">Reference</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero" id="overview">
+  <div class="wrap">
+    <div>
+      <div class="eyebrow">Self-hosted · one small container</div>
+      <h1 style="margin-top:12px">Let's Encrypt for your <span>MikroTik routers</span>, without the scripts.</h1>
+      <p class="lede">RouterOS ACME issues and renews certificates through Cloudflare DNS and installs them on your routers over the encrypted RouterOS API. You enroll each router once from the web UI. After that it runs by itself.</p>
+      <div class="chips">
+        <span class="chip">Wildcard certificates</span><span class="chip">RouterOS 7</span><span class="chip">amd64 · arm64 · armv7</span><span class="chip">~10 MB image</span>
+      </div>
+      <div class="cta"><a class="btn pri" href="#start">Get started</a><a class="btn" href="#flow">How it works</a></div>
+    </div>
+    <div class="stage">
+      <div class="win"><div class="bar"><i></i><i></i><i></i></div>
+        <img class="zoom" src="screenshots/desktop-03-devices.png" alt="Device list showing four routers with their connection, certificate and status" width="1280" height="860"></div>
+      <div class="phone"><img class="zoom" src="screenshots/phone-02-certificates.png" alt="Certificates on a phone, with the overview tiles" width="780" height="1688"></div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="features">
+  <div class="wrap">
+    <div class="head"><div class="eyebrow">What it does</div><h2>One place for every router certificate</h2>
+      <p class="lede">It replaces a container per router with a single service that knows all your certificates and devices.</p></div>
+    <div class="features">
+      <div class="feat"><span class="ic"><svg><use href="#i-cert"/></svg></span><h3>Certificates via DNS</h3>
+        <p>Let's Encrypt validates through a Cloudflare TXT record, so wildcards work and nothing has to be open to the internet. One wildcard can serve many routers.</p></div>
+      <div class="feat"><span class="ic"><svg><use href="#i-router"/></svg></span><h3>Device enrollment</h3>
+        <p>Connect a router once with an admin login. It gets a restricted service account, and from then on everything goes over api-ssl with a pinned certificate.</p></div>
+      <div class="feat"><span class="ic"><svg><use href="#i-box"/></svg></span><h3>Automatic renewal</h3>
+        <p>Every 12 hours it renews what expires within 30 days and pushes it to www-ssl, api-ssl, or anything else you script.</p></div>
+      <div class="feat"><span class="ic"><svg><use href="#i-users"/></svg></span><h3>Users and roles</h3>
+        <p>Admins change things; viewers can only look. Invite people by e-mail and let them choose their own password.</p></div>
+      <div class="feat"><span class="ic"><svg><use href="#i-mail"/></svg></span><h3>Notifications</h3>
+        <p>One summary e-mail when a renewal or deploy fails, a certificate is about to expire, or a new one was installed.</p></div>
+      <div class="feat"><span class="ic"><svg><use href="#i-lock"/></svg></span><h3>Built to be trusted</h3>
+        <p>No admin passwords are stored, private keys never land in a router log, and secrets are encrypted at rest.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="flow">
+  <div class="wrap">
+    <div class="head"><div class="eyebrow">How it works</div><h2>From order to router in four hops</h2>
+      <p class="lede">RouterOS ACME sits between Let's Encrypt, your DNS and your routers. Routers never talk to Let's Encrypt themselves.</p></div>
+    <div class="diagram" role="img" aria-label="Diagram: RouterOS ACME orders a certificate from Let's Encrypt, proves domain ownership with a TXT record in Cloudflare DNS, and installs the certificate on each router over api-ssl.">
+      <svg viewBox="0 0 900 360" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ar" d="M0 0L10 5L0 10z"/></marker>
+          <marker id="am" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ar m" d="M0 0L10 5L0 10z"/></marker>
+        </defs>
+        <path class="ln d" d="M250 46 H650" marker-end="url(#am)"/>
+        <text class="s" x="450" y="36" text-anchor="middle">3 · Let's Encrypt checks the TXT record</text>
+        <rect class="box" x="20" y="16" width="230" height="86" rx="14"/>
+        <text class="t" x="135" y="54" text-anchor="middle">Let's Encrypt</text><text class="s" x="135" y="78" text-anchor="middle">certificate authority</text>
+        <rect class="box" x="650" y="16" width="230" height="86" rx="14"/>
+        <text class="t" x="765" y="54" text-anchor="middle">Cloudflare DNS</text><text class="s" x="765" y="78" text-anchor="middle">_acme-challenge TXT</text>
+        <rect class="box me" x="335" y="128" width="230" height="96" rx="16"/>
+        <text class="t" x="450" y="170" text-anchor="middle">RouterOS ACME</text><text class="s" x="450" y="194" text-anchor="middle">container · web UI · scheduler</text>
+        <path class="ln" d="M335 160 C290 160 250 130 205 104" marker-end="url(#a)"/>
+        <text class="lbl" x="240" y="168" text-anchor="end">1 · order certificate</text>
+        <path class="ln" d="M565 160 C610 160 650 130 695 104" marker-end="url(#a)"/>
+        <text class="lbl" x="660" y="168">2 · create TXT record</text>
+        <path class="ln" d="M450 224 V256 H210 V278" marker-end="url(#a)"/>
+        <path class="ln" d="M450 224 V278" marker-end="url(#a)"/>
+        <path class="ln" d="M450 256 H690 V278" marker-end="url(#a)"/>
+        <text class="lbl" x="462" y="250">4 · api-ssl, pinned TLS</text>
+        <rect class="box" x="95" y="280" width="230" height="66" rx="14"/><text class="t" x="210" y="310" text-anchor="middle">core-gw</text><text class="s" x="210" y="331" text-anchor="middle">www-ssl · api-ssl</text>
+        <rect class="box" x="335" y="280" width="230" height="66" rx="14"/><text class="t" x="450" y="310" text-anchor="middle">branch-hap</text><text class="s" x="450" y="331" text-anchor="middle">www-ssl</text>
+        <rect class="box" x="575" y="280" width="230" height="66" rx="14"/><text class="t" x="690" y="310" text-anchor="middle">office-rb5009</text><text class="s" x="690" y="331" text-anchor="middle">www-ssl · sstp</text>
+      </svg>
+    </div>
+    <ol class="flowlist">
+      <li><b>1 · Order</b>RouterOS ACME asks Let's Encrypt for a certificate.</li>
+      <li><b>2 · Prove</b>It creates the _acme-challenge TXT record in Cloudflare.</li>
+      <li><b>3 · Check</b>Let's Encrypt reads the record and issues the certificate.</li>
+      <li><b>4 · Install</b>Each enrolled router receives it over api-ssl with a pinned certificate.</li>
+    </ol>
+    <div class="legend">
+      <div><b>Order</b>An ACME order for your names, wildcards included. Key type RSA or ECDSA.</div>
+      <div><b>Prove</b>A short-lived TXT record via a Cloudflare API token that only edits DNS.</div>
+      <div><b>Check</b>Let's Encrypt verifies, the record is removed, the certificate is stored.</div>
+      <div><b>Install</b>Imported, assigned to services, old copies removed. Unchanged routers are skipped.</div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="start">
+  <div class="wrap">
+    <div class="head"><div class="eyebrow">Get started</div><h2>Up and running in six steps</h2>
+      <p class="lede">You need Docker, a domain in Cloudflare and a MikroTik router on RouterOS 7.</p></div>
+    <div class="steps">
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Start the container</h3>
+          <p>Build and start it with Docker Compose. Configuration and certificates live in <code>./data</code>.</p>
+          <p>On first start the log prints a one-time <b>setup code</b>.</p></div>
+        <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># in the project folder</span>
+docker compose up -d --build
+docker compose logs | grep "Setup code"
+
+<span class="c"># ==> FIRST RUN: open the web UI and create the admin account.</span>
+<span class="c">#     Setup code: m3jnTYG1EUQm</span></pre></div>
+      </div>
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Create the admin account</h3>
+          <p>Open <code>http://&lt;host&gt;:8080</code>, enter the setup code and choose a username and password. The setup code makes sure nobody else on your network can claim the instance first.</p>
+          <p>Prefer no setup page? Set <code>ADMIN_USER</code> and <code>ADMIN_PASSWORD</code> for the first start.</p></div>
+        <div class="win"><div class="bar"><i></i><i></i><i></i></div><img class="zoom" src="screenshots/desktop-01-login.png" alt="Sign-in page" loading="lazy" width="1280" height="860"></div>
+      </div>
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Connect Let's Encrypt and Cloudflare</h3>
+          <ul>
+            <li>Enter the e-mail address for your Let's Encrypt account.</li>
+            <li>Paste a Cloudflare API token made from the <b>Edit zone DNS</b> template (Zone:Read, DNS:Edit).</li>
+            <li>Tick <b>staging</b> while you test, so you don't hit Let's Encrypt rate limits.</li>
+            <li>Optional: add SMTP for notifications, invitations and password reset.</li>
+          </ul></div>
+        <div class="win"><div class="bar"><i></i><i></i><i></i></div><img class="zoom" src="screenshots/desktop-05-settings.png" alt="Settings page with ACME, Cloudflare and e-mail settings" loading="lazy" width="1280" height="1301"></div>
+      </div>
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Add a certificate</h3>
+          <p>List the names, one per line: <code>*.example.com</code> and <code>example.com</code> for example. It is issued in the background, and the overview shows how many days each certificate has left.</p></div>
+        <div class="win"><div class="bar"><i></i><i></i><i></i></div><img class="zoom" src="screenshots/desktop-02-certificates.png" alt="Certificates page with overview tiles and three certificates" loading="lazy" width="1280" height="860"></div>
+      </div>
+
+      <div class="step" id="enroll">
+        <div class="txt"><div class="num"></div><h3>Enroll a router</h3>
+          <p><b>Connect</b> with the router's address and an admin SSH login. <b>Review</b> the identity, model and SSH host key, confirm it's your device, and see exactly what will change. <b>Enroll</b> and follow each step as it happens.</p>
+          <p>The admin login is used once and never saved. If the final check fails, the new account is removed again.</p></div>
+        <div class="trio">
+          <figure><img class="zoom" src="screenshots/phone-08-enroll-1-connect.png" alt="Enroll step 1: connect" loading="lazy" width="780" height="1688"><figcaption>1 · Connect</figcaption></figure>
+          <figure><img class="zoom" src="screenshots/phone-09-enroll-2-review.png" alt="Enroll step 2: review and confirm" loading="lazy" width="780" height="1688"><figcaption>2 · Review</figcaption></figure>
+          <figure><img class="zoom" src="screenshots/phone-10-enroll-3-result.png" alt="Enroll step 3: result with all steps passed" loading="lazy" width="780" height="1688"><figcaption>3 · Result</figcaption></figure>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Watch it deploy</h3>
+          <p>Right after enrollment the certificate is installed. The device turns <b>Up to date</b>, and the log shows each action. From now on renewals and deploys happen on their own.</p></div>
+        <div class="pair">
+          <div class="win"><div class="bar"><i></i><i></i><i></i></div><img class="zoom" src="screenshots/desktop-14-devices-after-enroll.png" alt="Device list after enrollment, status up to date" loading="lazy" width="1280" height="860"></div>
+          <div class="win"><div class="bar"><i></i><i></i><i></i></div><img class="zoom" src="screenshots/desktop-11-log.png" alt="Log showing enrollment and a successful deploy" loading="lazy" width="1280" height="860"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="security">
+  <div class="wrap">
+    <div class="head"><div class="eyebrow">Security</div><h2>What enrollment changes, and why it's safe</h2>
+      <p class="lede">The goal is that RouterOS ACME can do one job on your routers and nothing else, with no human password to leak.</p></div>
+    <div class="guards">
+      <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Admin logins are never stored</b><p>The SSH login is used for enrollment only, then discarded. Changing your admin password later changes nothing.</p></div></div>
+      <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Pinned TLS to every router</b><p>api-ssl's certificate fingerprint is pinned at enrollment. An impostor device is refused, even on a bare IP address.</p></div></div>
+      <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>A least-privilege account</b><p>API only. No SSH, Winbox, WebFig or console, no user management, no reboot. Login limited to this server's address.</p></div></div>
+      <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>A password nobody knows</b><p>256 random bits, encrypted at rest, rotated automatically every 30 days. RouterOS's API has no key login, so this is the passwordless equivalent.</p></div></div>
+      <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Keys stay out of router logs</b><p>RouterOS logs uploaded file contents, so private keys are uploaded encrypted with a one-time passphrase.</p></div></div>
+      <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Clean removal</b><p>Removing a device can also delete its service account from the router, using an admin login once.</p></div></div>
+    </div>
+    <div class="changes">
+      <div><h3>Created on the router</h3>
+        <ul>
+          <li>Certificate <code>routeros-acme-api</code> for api-ssl, unless api-ssl already has one, which is then kept and pinned.</li>
+          <li>api-ssl enabled on the port you choose. Other services are not touched.</li>
+          <li>Group <code>routeros-acme</code> and user <code>routeros-acme</code>, both marked "Managed by RouterOS ACME".</li>
+        </ul></div>
+      <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># the group's policies, as set on the router</span>
+<span class="k">/user group</span> add name=routeros-acme policy=\
+  api,read,write,ftp,sensitive,password,\
+  !local,!telnet,!ssh,!reboot,!policy,!test,\
+  !winbox,!web,!sniff,!romon,!rest-api</pre></div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="daily">
+  <div class="wrap">
+    <div class="head"><div class="eyebrow">Day to day</div><h2>What happens while you're not looking</h2></div>
+    <div class="daily">
+      <div class="tile"><div class="big">12 h</div><h3>Scheduled check</h3><p>Renews certificates with fewer than 30 days left, then deploys to every router that doesn't have the current one. Both numbers are adjustable.</p></div>
+      <div class="tile"><div class="big">1 e-mail</div><h3>Summary notifications</h3><p>One message per check: failures, expiry warnings (14 days by default) and renewals. The same error is sent at most once a day.</p></div>
+      <div class="tile"><div class="big">30 days</div><h3>Password rotation</h3><p>Each router's service password is replaced automatically. A crash halfway through can't lock the app out.</p></div>
+      <div class="tile"><div class="big">2 roles</div><h3>Admin and viewer</h3><p>Viewers see everything but can't change anything. The last admin can't be demoted or deleted.</p></div>
+      <div class="tile"><div class="big">72 h</div><h3>E-mail invitations</h3><p>Invite by address and role. The person picks their own username and password. Forgot-password links last one hour.</p></div>
+      <div class="tile"><div class="big">500</div><h3>Log lines</h3><p>Who did what and when: logins, enrollments, deploys, user changes. Viewers can read it too.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="mobile">
+  <div class="wrap">
+    <div class="head"><div class="eyebrow">On your phone</div><h2>The whole app fits in your pocket</h2>
+      <p class="lede">A bottom tab bar, stacked cards and bottom-sheet dialogs. Light and dark follow your phone's setting.</p></div>
+    <div class="phones">
+      <figure class="phone"><img class="zoom" src="screenshots/phone-03-devices.png" alt="Devices on a phone" loading="lazy" width="780" height="1688"></figure>
+      <figure class="phone"><img class="zoom" src="screenshots/phone-04-device-details.png" alt="Device details sheet on a phone" loading="lazy" width="780" height="1688"></figure>
+      <figure class="phone"><img class="zoom" src="screenshots/phone-06-users.png" alt="Users on a phone" loading="lazy" width="780" height="1688"></figure>
+      <figure class="phone"><img class="zoom" src="screenshots/phone-11-certificates-dark.png" alt="Certificates in dark mode on a phone" loading="lazy" width="780" height="1688"></figure>
+      <figure class="phone"><img class="zoom" src="screenshots/phone-12-devices-dark.png" alt="Devices in dark mode on a phone" loading="lazy" width="780" height="1688"></figure>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="reference">
+  <div class="wrap">
+    <div class="head"><div class="eyebrow">Reference</div><h2>Configuration</h2>
+      <p class="lede">Everything else is set in the web UI and stored in <code>data/config.json</code>.</p></div>
+    <div class="refgrid">
+      <div class="tablewrap"><table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td>ADMIN_USER</td><td>admin</td><td>First-run admin name, used with ADMIN_PASSWORD</td></tr>
+          <tr><td>ADMIN_PASSWORD</td><td>–</td><td>Creates the admin on first run and skips the setup page</td></tr>
+          <tr><td>TRUSTED_PROXIES</td><td>–</td><td>Reverse proxy IPs or CIDRs, or <code>private</code>. Only these may set X-Forwarded-For and -Proto</td></tr>
+          <tr><td>BASE_PATH</td><td>–</td><td>Serve under a sub-path such as <code>/certs</code></td></tr>
+          <tr><td>COOKIE_SECURE</td><td>false</td><td>Always mark the session cookie Secure</td></tr>
+          <tr><td>SECRET_KEY</td><td>secret.key</td><td>Key that encrypts router secrets. By default a random key file in data/</td></tr>
+          <tr><td>LISTEN</td><td>:8080</td><td>Address of the web UI</td></tr>
+          <tr><td>DATA_DIR</td><td>/data</td><td>Config, ACME account, certificates</td></tr>
+          <tr><td>TZ</td><td>UTC</td><td>Time zone for the log</td></tr>
+        </tbody></table></div>
+      <div class="notes">
+        <div class="note"><b>Network</b>The container must reach each router's api-ssl port (8729 by default), and its SSH port during enrollment.</div>
+        <div class="note"><b>Behind a reverse proxy</b>Let the proxy handle HTTPS, set TRUSTED_PROXIES, and don't publish port 8080 to the network.</div>
+        <div class="note"><b>Backups</b>Back up <code>data/</code>. Keep <code>secret.key</code> apart from config backups. Without it, routers need to be enrolled again.</div>
+        <div class="note"><b>Multi-arch image</b><code>docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t you/routeros-acme --push .</code></div>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer><div class="wrap"><span>RouterOS ACME · self-hosted certificate management for MikroTik</span><span>Screenshots show demo data, plus a real enrollment on a RouterOS 7.25.1 test VM.</span></div></footer>
+
+<div class="lb" id="lb" hidden><img alt=""></div>
+
+<script>
+// click any screenshot to view it full size
+const lb = document.getElementById('lb'), lbImg = lb.querySelector('img');
+document.querySelectorAll('img.zoom').forEach(img => img.addEventListener('click', () => {
+  lbImg.src = img.src; lbImg.alt = img.alt; lb.hidden = false;
+}));
+lb.addEventListener('click', () => { lb.hidden = true; });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') lb.hidden = true; });
+
+// copy buttons for code blocks
+document.querySelectorAll('.copy').forEach(btn => btn.addEventListener('click', () => {
+  const pre = btn.parentElement.querySelector('pre');
+  const text = pre.innerText.split('\n').filter(l => !l.trim().startsWith('#')).join('\n').trim();
+  const done = ok => { btn.textContent = ok ? 'Copied' : 'Select and copy'; setTimeout(() => btn.textContent = 'Copy', 1600); };
+  try {
+    navigator.clipboard.writeText(text).then(() => done(true), () => { selectText(pre); done(false); });
+  } catch (e) { selectText(pre); done(false); }
+}));
+function selectText(el) { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+</script>

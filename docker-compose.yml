@@ -1,0 +1,20 @@
+services:
+  routeros-acme:
+    build: .
+    image: routeros-acme:latest
+    container_name: routeros-acme
+    restart: unless-stopped
+    ports:
+      - "8080:8080"            # behind a reverse proxy: remove this, or use "127.0.0.1:8080:8080"
+    environment:
+      TZ: UTC          # set your timezone, e.g. Europe/Berlin
+      # First run: the log prints a setup code; open the UI to create the admin account.
+      # Or create the admin non-interactively (only used while no users exist):
+      # ADMIN_USER: admin
+      # ADMIN_PASSWORD: change-me-please
+      # Behind a reverse proxy (see README):
+      # TRUSTED_PROXIES: 172.16.0.0/12   # proxy address(es)/CIDRs, or "private"
+      # BASE_PATH: /certs                # only when served under a sub-path
+      # COOKIE_SECURE: "true"            # force Secure cookie (auto when proxy sends X-Forwarded-Proto: https)
+    volumes:
+      - ./data:/data

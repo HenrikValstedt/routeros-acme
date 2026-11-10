@@ -1,0 +1,1020 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f7fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0f17" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>RouterOS ACME</title>
+<style>
+:root{
+  --bg:#f6f7fb;--bg2:#eef0f7;--card:#fff;--fg:#0f172a;--muted:#64748b;--line:#e6e8f0;--line2:#d7dbe7;
+  --acc:#4f46e5;--acc2:#6366f1;--acc-bg:#eef2ff;--acc-fg:#fff;
+  --ok:#059669;--ok-bg:#ecfdf5;--warn:#b45309;--warn-bg:#fffbeb;--err:#dc2626;--err-bg:#fef2f2;--mute-bg:#f1f5f9;
+  --in:#fff;--shadow:0 1px 2px rgb(15 23 42/.04),0 4px 16px rgb(15 23 42/.05);--shadow-lg:0 20px 50px rgb(15 23 42/.18);
+  --r:14px;--r-sm:10px;--hdr:60px;--nav-h:64px;
+  --safe-b:env(safe-area-inset-bottom,0px);--safe-l:env(safe-area-inset-left,0px);--safe-r:env(safe-area-inset-right,0px);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0b0f17;--bg2:#0f1522;--card:#121826;--fg:#e5e7eb;--muted:#94a3b8;--line:#1f2937;--line2:#2a3446;
+  --acc:#818cf8;--acc2:#6366f1;--acc-bg:#1e1b4b;--acc-fg:#0b0f17;
+  --ok:#34d399;--ok-bg:#052e22;--warn:#fbbf24;--warn-bg:#2a1f05;--err:#f87171;--err-bg:#2c0e0e;--mute-bg:#1a2233;
+  --in:#0e1420;--shadow:0 1px 2px rgb(0 0 0/.3),0 6px 20px rgb(0 0 0/.25);--shadow-lg:0 24px 60px rgb(0 0 0/.55);
+}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;font:14.5px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--fg);
+  -webkit-font-smoothing:antialiased;min-height:100dvh}
+body.viewer .adm{display:none!important}
+svg.i{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+/* ---- shell ---- */
+header.top{position:sticky;top:0;z-index:20;height:var(--hdr);display:flex;align-items:center;gap:10px;
+  padding:0 max(20px,var(--safe-r)) 0 max(20px,var(--safe-l));background:color-mix(in srgb,var(--card) 82%,transparent);
+  backdrop-filter:saturate(1.6) blur(14px);-webkit-backdrop-filter:saturate(1.6) blur(14px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;flex:1;min-width:0;font-weight:650;font-size:16px;letter-spacing:-.01em}
+.brand b{color:var(--acc)}
+.logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;color:#fff;flex:none;
+  background:linear-gradient(135deg,var(--acc2),#8b5cf6);box-shadow:0 4px 12px rgb(99 102 241/.35)}
+.logo svg.i{width:19px;height:19px;stroke-width:2}
+.status{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--muted);padding:6px 10px;border-radius:99px;background:var(--mute-bg)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent)}
+.busy .dot{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 25%,transparent);animation:p 1s infinite}
+@keyframes p{50%{opacity:.35}}
+.me{display:inline-flex;align-items:center;gap:8px;padding:4px 10px 4px 4px!important}
+.av{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;color:var(--acc);background:var(--acc-bg);text-transform:uppercase}
+
+nav#tabs{position:sticky;top:var(--hdr);z-index:15;display:flex;gap:4px;padding:10px max(20px,var(--safe-r)) 0 max(20px,var(--safe-l));
+  background:var(--bg);overflow-x:auto;scrollbar-width:none;max-width:1140px;margin:0 auto}
+nav#tabs::-webkit-scrollbar{display:none}
+nav#tabs button{display:inline-flex;align-items:center;gap:8px;border:0;background:none;color:var(--muted);padding:9px 14px;border-radius:10px;
+  font:inherit;font-weight:550;cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
+nav#tabs button:hover{color:var(--fg);background:var(--mute-bg)}
+nav#tabs button.on{color:var(--acc);background:var(--acc-bg)}
+main{max-width:1140px;margin:0 auto;padding:18px max(20px,var(--safe-r)) 40px max(20px,var(--safe-l))}
+main>section{animation:fade .18s ease-out}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}}
+
+/* ---- page header, cards, stats ---- */
+.ph{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:6px 0 16px;flex-wrap:wrap}
+.ph h2{font-size:22px;letter-spacing:-.02em;margin:0;font-weight:700}
+.ph p{margin:2px 0 0;color:var(--muted);font-size:13.5px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin-bottom:16px;box-shadow:var(--shadow)}
+.card.flush{padding:0;overflow:hidden}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap}
+.row h2{font-size:16px;margin:0;font-weight:650;letter-spacing:-.01em}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow);display:flex;gap:12px;align-items:center}
+.stat .si{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none}
+.stat .si.ok{background:var(--ok-bg);color:var(--ok)}.stat .si.warn{background:var(--warn-bg);color:var(--warn)}
+.stat .si.err{background:var(--err-bg);color:var(--err)}.stat .si.acc{background:var(--acc-bg);color:var(--acc)}
+.stat b{display:block;font-size:20px;line-height:1.1;letter-spacing:-.02em}
+.stat span{font-size:12.5px;color:var(--muted)}
+
+/* ---- tables → cards on phones ---- */
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background .12s}
+tbody tr:hover{background:color-mix(in srgb,var(--mute-bg) 55%,transparent)}
+th{font-weight:600;color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;background:color-mix(in srgb,var(--mute-bg) 60%,transparent)}
+td.main{font-weight:600}
+td.main .sub{font-weight:400}
+.sub{font-size:12.5px;color:var(--muted);margin-top:2px}
+.tw{overflow-x:auto}
+td.acts-cell{text-align:right;white-space:nowrap;width:1%}
+td.acts-cell .acts{justify-content:flex-end;flex-wrap:nowrap}
+td.acts-cell button{height:34px;padding:0 12px;font-size:13.5px}
+th,.nw,.lockline{white-space:nowrap}
+.empty{padding:40px 20px!important;text-align:center;color:var(--muted)}
+.empty svg.i{width:34px;height:34px;display:block;margin:0 auto 10px;opacity:.55}
+
+/* ---- text, pills, badges ---- */
+.muted{color:var(--muted)}.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}
+.small{font-size:12.5px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:3px 10px;border-radius:99px;white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--ok);background:var(--ok-bg)}.pill.warn{color:var(--warn);background:var(--warn-bg)}
+.pill.err{color:var(--err);background:var(--err-bg)}.pill.muted{color:var(--muted);background:var(--mute-bg)}
+.errtxt{font-size:12px;color:var(--err);margin-top:6px;max-width:420px;word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;
+  -webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.errtxt.open{-webkit-line-clamp:unset}
+.badge{display:inline-flex;align-items:center;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--mute-bg);color:var(--muted)}
+.badge.admin{color:var(--acc);background:var(--acc-bg)}
+.lockline{display:inline-flex;align-items:center;gap:5px;color:var(--ok);font-size:12.5px;font-weight:550}
+.lockline svg.i{width:14px;height:14px}
+
+/* ---- buttons ---- */
+button{font:inherit;font-weight:550;font-size:14px;height:38px;padding:0 14px;border-radius:var(--r-sm);border:1px solid var(--line2);background:var(--card);
+  color:var(--fg);cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  transition:background .15s,border-color .15s,transform .05s,box-shadow .15s}
+button:hover{background:var(--mute-bg)}
+button:active{transform:scale(.98)}
+button.pri{background:var(--acc);border-color:var(--acc);color:var(--acc-fg);box-shadow:0 2px 8px color-mix(in srgb,var(--acc) 30%,transparent)}
+button.pri:hover{background:color-mix(in srgb,var(--acc) 88%,#000)}
+button.ghost{border-color:transparent;background:transparent}
+button.ghost:hover{background:var(--mute-bg)}
+button.icon{width:38px;padding:0}
+button.del{color:var(--err)}
+button.del:hover{background:var(--err-bg);border-color:color-mix(in srgb,var(--err) 35%,transparent)}
+button.danger{background:var(--err);border-color:var(--err);color:#fff}
+button:disabled{opacity:.55;cursor:default;transform:none}
+.acts{display:flex;gap:6px;flex-wrap:wrap}
+
+/* ---- forms ---- */
+label{display:block;margin:14px 0 6px;font-weight:600;font-size:13px}
+label.inl{display:inline-flex;gap:8px;align-items:center;font-weight:500;margin:8px 18px 0 0;cursor:pointer}
+input[type=text],input[type=email],input[type=password],input[type=number],select,textarea{width:100%;height:42px;padding:0 12px;
+  border:1px solid var(--line2);border-radius:var(--r-sm);background:var(--in);color:var(--fg);font:inherit;font-size:14.5px;
+  transition:border-color .15s,box-shadow .15s;-webkit-appearance:none;appearance:none}
+select{background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+  background-position:calc(100% - 18px) 18px,calc(100% - 13px) 18px;background-size:5px 5px;background-repeat:no-repeat;padding-right:34px}
+textarea{height:auto;min-height:88px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;resize:vertical}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--acc);box-shadow:0 0 0 4px color-mix(in srgb,var(--acc) 18%,transparent)}
+input[readonly]{background:var(--mute-bg)}
+input[type=checkbox],input[type=radio]{width:18px;height:18px;accent-color:var(--acc);margin:0;flex:none}
+fieldset{border:0;padding:0;margin:0;min-width:0}
+fieldset:disabled input,fieldset:disabled select,fieldset:disabled textarea{opacity:.75}
+.hint{font-size:12.5px;color:var(--muted);margin-top:6px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
+
+/* ---- dialogs (bottom sheets on phones) ---- */
+dialog{border:0;border-radius:18px;background:var(--card);color:var(--fg);width:min(640px,calc(100vw - 32px));padding:0;
+  max-height:min(90dvh,900px);box-shadow:var(--shadow-lg);overflow:auto;overscroll-behavior:contain}
+dialog[open]{animation:pop .18s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(10px) scale(.98)}}
+dialog.sm{width:min(430px,calc(100vw - 32px))}
+dialog::backdrop{background:rgb(2 6 23/.5);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+dialog>form{padding:22px 22px 0}
+dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
+.foot{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;position:sticky;bottom:0;margin:20px -22px 0;padding:14px 22px calc(14px + var(--safe-b));
+  background:color-mix(in srgb,var(--card) 92%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-top:1px solid var(--line)}
+#auth .foot,.card .foot{position:static;margin:18px 0 0;padding:0;border:0;background:none;backdrop-filter:none}
+
+/* ---- misc ---- */
+#log{background:#0b1020;color:#cbd5e1;border-radius:var(--r-sm);padding:14px;height:62vh;overflow:auto;white-space:pre-wrap;margin:0;font-size:12px;line-height:1.6}
+#toast{position:fixed;bottom:calc(20px + var(--safe-b));left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;
+  border-radius:12px;display:none;max-width:min(560px,calc(100vw - 32px));z-index:50;box-shadow:var(--shadow-lg);font-weight:500;animation:pop .18s ease-out}
+.info{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:12px 0;font-size:13.5px}
+.info ul{margin:8px 0 0;padding-left:20px}.info li{margin:4px 0}
+.info.lock{background:var(--ok-bg);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+.info.warnbox{background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;font-size:13.5px;margin:0}
+.kv dt{color:var(--muted)}.kv dd{margin:0;word-break:break-all}
+.steps{list-style:none;padding:0;margin:8px 0}
+.steps li{display:grid;grid-template-columns:26px 1fr;gap:2px 8px;padding:10px 0;border-bottom:1px solid var(--line);font-weight:550}
+.steps li:last-child{border:0}
+.steps .ico{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:800}
+.steps .ok .ico{color:var(--ok);background:var(--ok-bg)}.steps .bad .ico{color:var(--err);background:var(--err-bg)}
+.steps .d{grid-column:2;font-size:12.5px;color:var(--muted);font-weight:400;word-break:break-word}
+.stepper{display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--muted);margin:2px 0 14px;flex-wrap:wrap}
+.stepper span{padding:4px 10px;border-radius:99px;background:var(--mute-bg)}
+.stepper span.on{color:var(--acc-fg);background:var(--acc);font-weight:600}
+#auth{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px 16px;
+  background:radial-gradient(1200px 600px at 10% -10%,color-mix(in srgb,var(--acc2) 18%,transparent),transparent),
+             radial-gradient(900px 500px at 110% 110%,color-mix(in srgb,#8b5cf6 16%,transparent),transparent),var(--bg)}
+#auth .card{width:min(400px,100%);padding:26px;box-shadow:var(--shadow-lg)}
+#auth h2{margin:0 0 4px;font-size:21px;letter-spacing:-.02em}
+#auth .brand{flex:none;font-size:18px}
+.err-box{color:var(--err);font-size:13px;min-height:1.2em;margin-top:10px}
+
+/* ---- phones ---- */
+@media (max-width:760px){
+  :root{--hdr:56px}
+  body{font-size:15px}
+  header.top{padding:0 max(14px,var(--safe-r)) 0 max(14px,var(--safe-l));gap:6px}
+  .brand{font-size:15px;gap:8px}.logo{width:32px;height:32px}
+  .status #statusTxt,.me .nm,.me .badge,.hide-sm{display:none}
+  .me{padding:4px!important}
+  nav#tabs{position:fixed;top:auto;bottom:0;left:0;right:0;max-width:none;margin:0;z-index:30;gap:0;justify-content:space-around;
+    padding:6px max(6px,var(--safe-r)) calc(6px + var(--safe-b)) max(6px,var(--safe-l));
+    background:color-mix(in srgb,var(--card) 88%,transparent);backdrop-filter:saturate(1.6) blur(16px);-webkit-backdrop-filter:saturate(1.6) blur(16px);
+    border-top:1px solid var(--line);overflow:visible}
+  nav#tabs button{flex:1;flex-direction:column;gap:3px;font-size:11px;font-weight:600;padding:6px 2px;border-radius:12px;min-width:0;height:auto}
+  nav#tabs button svg.i{width:22px;height:22px}
+  nav#tabs button:hover{background:none}
+  nav#tabs button.on{background:none}
+  nav#tabs button.on svg.i{background:var(--acc-bg);border-radius:10px;padding:3px 10px;width:42px;height:28px;box-sizing:border-box}
+  main{padding:14px max(14px,var(--safe-r)) calc(var(--nav-h) + 24px + var(--safe-b)) max(14px,var(--safe-l))}
+  .ph{align-items:center;margin:2px 0 14px}
+  .ph h2{font-size:20px}
+  .ph p{display:none}
+  .stats{grid-template-columns:1fr 1fr;gap:10px}
+  .stat{padding:12px}
+  .card{padding:16px;border-radius:16px}
+  .grid{grid-template-columns:1fr}
+  button{height:44px;font-size:15px}
+  button.icon{width:44px}
+  input[type=text],input[type=email],input[type=password],input[type=number],select{height:46px;font-size:16px}
+  textarea{font-size:16px}
+  #toast{bottom:calc(var(--nav-h) + 16px + var(--safe-b))}
+  #log{height:calc(100dvh - 260px)}
+  /* tables become stacked cards */
+  table.rt,table.rt tbody,table.rt tr,table.rt td{display:block;width:100%}
+  table.rt thead{display:none}
+  table.rt tr{padding:14px 16px;border-bottom:1px solid var(--line)}
+  table.rt tbody tr:last-child{border-bottom:0}
+  table.rt tbody tr:hover{background:none}
+  table.rt td{border:0;padding:5px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:14px;text-align:right}
+  table.rt td::before{content:attr(data-label);color:var(--muted);font-size:13px;font-weight:500;text-align:left;flex:none}
+  table.rt td>.v{min-width:0;text-align:right}
+  table.rt td>.v .errtxt{text-align:right;margin-left:auto}
+  td.acts-cell button{height:44px;font-size:15px}
+  table.rt td.main{display:block;text-align:left;font-size:16px;padding-bottom:6px}
+  table.rt td.main::before,table.rt td.acts-cell::before,table.rt td.empty::before{display:none}
+  table.rt td.acts-cell{padding-top:12px;text-align:left}
+  table.rt td.acts-cell .acts{justify-content:stretch;width:100%}
+  table.rt td.acts-cell .acts button{flex:1 1 auto}
+  table.rt td.empty{display:block}
+  dialog,dialog.sm{width:100%;max-width:100%;margin:auto 0 0;border-radius:22px 22px 0 0;max-height:94dvh}
+  dialog[open]{animation:sheet .22s cubic-bezier(.2,.8,.2,1)}
+  dialog>form{padding:12px 16px 0}
+  dialog>form::before{content:"";display:block;width:40px;height:5px;border-radius:9px;background:var(--line2);margin:0 auto 12px}
+  .foot{margin:18px -16px 0;padding:12px 16px calc(12px + var(--safe-b))}
+  .foot button{flex:1}
+  .kv{grid-template-columns:1fr;gap:0}.kv dd{margin-bottom:8px}
+}
+@keyframes sheet{from{transform:translateY(100%)}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-cert" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M7 8h10M7 11h6"/><circle cx="16" cy="17" r="3"/><path d="M14.5 19.5L14 22l2-1 2 1-.5-2.5"/></symbol>
+  <symbol id="i-router" viewBox="0 0 24 24"><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h.01M11 16.5h.01M17 13V9M8.5 8.5a5 5 0 017 0M6 6a8.5 8.5 0 0112 0"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0113 0M16 4.5a3.5 3.5 0 010 7M18 14a5.5 5.5 0 013.5 6"/></symbol>
+  <symbol id="i-log" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M12 15h5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-3-6.7M21 4v5h-5"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 012 2v12a2 2 0 01-2 2h-3M10 17l5-5-5-5M15 12H3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5M12 18h.01"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></symbol>
+</svg>
+
+<!-- login / first-run -->
+<div id="auth" hidden>
+  <div class="brand"><span class="logo"><svg class="i"><use href="#i-shield"/></svg></span><span>RouterOS <b>ACME</b></span></div>
+  <form class="card" id="setupForm" hidden>
+    <h2>Welcome</h2>
+    <div class="muted small">Create the administrator account. The setup code is printed in the container log
+      (<span class="mono">docker logs &lt;container&gt;</span>).</div>
+    <label>Setup code</label><input type="text" name="code" autocomplete="off" required>
+    <label>Username</label><input type="text" name="username" value="admin" autocomplete="username" required>
+    <label>E-mail (optional, for notifications and password reset)</label><input type="email" name="email" autocomplete="email">
+    <label>Password</label><input type="password" name="password" minlength="8" maxlength="72" autocomplete="new-password" required>
+    <label>Repeat password</label><input type="password" name="password2" autocomplete="new-password" required>
+    <div class="err-box"></div>
+    <div class="foot"><button class="pri">Create admin &amp; sign in</button></div>
+  </form>
+  <form class="card" id="loginForm" hidden>
+    <h2>Welcome back</h2>
+    <div class="muted small">Sign in to manage your certificates and devices.</div>
+    <label>Username</label><input type="text" name="username" autocomplete="username" required>
+    <label>Password</label><input type="password" name="password" autocomplete="current-password" required>
+    <div class="err-box"></div>
+    <div class="foot" style="justify-content:space-between"><a href="#" id="forgotLink" class="small" hidden>Forgot password?</a><button class="pri">Sign in</button></div>
+  </form>
+  <form class="card" id="forgotForm" hidden>
+    <h2>Reset password</h2>
+    <div class="muted small">Enter your username or e-mail address. If your account has an e-mail address, a reset link will be sent to it.</div>
+    <label>Username or e-mail</label><input type="text" name="login" autocomplete="username" required>
+    <div class="err-box"></div>
+    <div class="foot"><button type="button" onclick="showAuth(false)">Back</button><button class="pri">Send reset link</button></div>
+  </form>
+  <form class="card" id="resetForm" hidden>
+    <h2>Choose a new password</h2>
+    <label>New password</label><input type="password" name="password" minlength="8" maxlength="72" autocomplete="new-password" required>
+    <label>Repeat new password</label><input type="password" name="password2" autocomplete="new-password" required>
+    <div class="err-box"></div>
+    <div class="foot"><button class="pri">Set password</button></div>
+  </form>
+  <form class="card" id="inviteForm" hidden>
+    <h2>Create your account</h2>
+    <div class="muted small" id="inviteInfo"></div>
+    <label>Username</label><input type="text" name="username" maxlength="32" autocomplete="username" required>
+    <label>Password</label><input type="password" name="password" minlength="8" maxlength="72" autocomplete="new-password" required>
+    <label>Repeat password</label><input type="password" name="password2" autocomplete="new-password" required>
+    <div class="err-box"></div>
+    <div class="foot"><button class="pri">Create account &amp; sign in</button></div>
+  </form>
+</div>
+
+<div id="app" hidden>
+<header class="top">
+  <div class="brand"><span class="logo"><svg class="i"><use href="#i-shield"/></svg></span><span class="bt">RouterOS <b>ACME</b></span></div>
+  <span id="status" class="status" title="Background jobs"><span class="dot"></span><span id="statusTxt">Idle</span></span>
+  <button class="pri adm" onclick="act('POST','/api/run','Check started')" title="Renew due certificates and deploy now"><svg class="i"><use href="#i-play"/></svg><span class="hide-sm">Run check</span></button>
+  <button id="meBtn" class="ghost me" onclick="openAccount()" title="My account"></button>
+  <button class="ghost icon" onclick="logout()" title="Sign out" aria-label="Sign out"><svg class="i"><use href="#i-out"/></svg></button>
+</header>
+<nav id="tabs">
+  <button data-t="certs" class="on"><svg class="i"><use href="#i-cert"/></svg><span>Certificates</span></button>
+  <button data-t="routers"><svg class="i"><use href="#i-router"/></svg><span>Devices</span></button>
+  <button data-t="settings"><svg class="i"><use href="#i-gear"/></svg><span>Settings</span></button>
+  <button data-t="users" class="adm"><svg class="i"><use href="#i-users"/></svg><span>Users</span></button>
+  <button data-t="log"><svg class="i"><use href="#i-log"/></svg><span>Log</span></button>
+</nav>
+<main>
+  <section id="t-certs">
+    <div class="stats" id="stats"></div>
+    <div class="ph"><div><h2>Certificates</h2><p>Let's Encrypt certificates, validated through Cloudflare DNS.</p></div>
+      <button class="pri adm" onclick="editCert()"><svg class="i"><use href="#i-plus"/></svg>Add certificate</button></div>
+    <div class="card flush"><div class="tw"><table class="rt"><thead><tr><th>Name</th><th>Domains</th><th>Expires</th><th>Status</th><th class="adm"></th></tr></thead><tbody id="certRows"></tbody></table></div></div>
+  </section>
+  <section id="t-routers" hidden>
+    <div class="ph"><div><h2>Devices</h2><p>MikroTik routers managed over the encrypted API.</p></div>
+      <button class="pri adm" onclick="enrollWizard()"><svg class="i"><use href="#i-plus"/></svg>Enroll device</button></div>
+    <div class="card flush"><div class="tw"><table class="rt"><thead><tr><th>Device</th><th>Connection</th><th>Certificate</th><th>Last deploy</th><th>Status</th><th class="adm"></th></tr></thead><tbody id="routerRows"></tbody></table></div></div>
+  </section>
+  <section id="t-settings" hidden>
+    <div class="ph"><div><h2>Settings</h2><p>Certificate authority, DNS provider and e-mail.</p></div></div>
+    <form class="card" id="setForm"><fieldset id="setFs">
+      <div class="row"><h2>ACME &amp; Cloudflare</h2><span class="pill muted" id="roNote" hidden>Read-only</span></div>
+      <div class="grid">
+        <div><label>ACME account e-mail</label><input type="email" name="email" required></div>
+        <div><label>Cloudflare API token</label><input type="password" name="cfToken" autocomplete="off"><div class="hint">Token needs Zone:Read and DNS:Edit for the zones.</div></div>
+        <div><label>Key type</label><select name="keyType"><option value="rsa2048">RSA 2048 (most compatible)</option><option value="rsa4096">RSA 4096</option><option value="ec256">ECDSA P-256</option><option value="ec384">ECDSA P-384</option></select></div>
+        <div><label>Renew when fewer than (days)</label><input type="number" name="renewDays" min="1" max="60"></div>
+        <div><label>Check interval (hours)</label><input type="number" name="checkHours" min="1" max="168"></div>
+        <div><label>DNS resolvers for propagation check</label><input type="text" name="dnsResolvers" placeholder="1.1.1.1, 8.8.8.8 (optional)"></div>
+      </div>
+      <label class="inl" style="margin-top:12px"><input type="checkbox" name="staging"> Use Let's Encrypt staging (for testing, certs are not trusted)</label>
+      <div class="foot adm"><button class="pri">Save settings</button></div>
+    </fieldset></form>
+    <form class="card" id="mailForm"><fieldset id="mailFs">
+      <div class="row"><h2>E-mail &amp; notifications</h2><span class="small muted" id="mailState"></span></div>
+      <div class="grid">
+        <div><label>SMTP server</label><input type="text" name="host" placeholder="smtp.example.com"></div>
+        <div class="grid" style="grid-template-columns:1fr 1.4fr">
+          <div><label>Port</label><input type="number" name="port" min="1" max="65535"></div>
+          <div><label>Security</label><select name="security"><option value="starttls">STARTTLS (587)</option><option value="tls">TLS (465)</option><option value="none">None (25, relay)</option></select></div>
+        </div>
+        <div><label>SMTP username</label><input type="text" name="user" autocomplete="off" placeholder="empty = no authentication"></div>
+        <div><label>SMTP password</label><input type="password" name="password" autocomplete="new-password"></div>
+        <div><label>From address</label><input type="email" name="from" placeholder="acme@example.com"></div>
+        <div><label>Public URL of this site</label><input type="text" name="publicUrl" placeholder="https://certs.example.com"><div class="hint">Used in e-mailed links. Required for "forgot password".</div></div>
+      </div>
+      <label>Send notifications for</label>
+      <label class="inl"><input type="checkbox" name="notifyIssueFail"> Renewal failed</label>
+      <label class="inl"><input type="checkbox" name="notifyExpiry"> Expiring soon</label>
+      <label class="inl"><input type="checkbox" name="notifyDeployFail"> Deploy failed</label>
+      <label class="inl"><input type="checkbox" name="notifyIssueOk"> Certificate renewed</label>
+      <label class="inl"><input type="checkbox" name="notifyDeployOk"> Deployed to router</label>
+      <div class="grid">
+        <div><label>Warn when a certificate expires within (days)</label><input type="number" name="warnDays" min="1" max="60"></div>
+        <div><label>Extra recipients</label><input type="text" name="extraRecipients" placeholder="ops@example.com, …"></div>
+      </div>
+      <div class="hint">Notifications go to every user who turned them on under <i>My account</i>, plus the extra recipients. Repeated identical errors are sent at most once per day.</div>
+      <div class="foot adm"><button type="button" onclick="testMail()">Send test e-mail</button><button class="pri">Save e-mail settings</button></div>
+    </fieldset></form>
+  </section>
+  <section id="t-users" hidden>
+    <div class="ph"><div><h2>Users</h2><p>Who can sign in, and what they may do.</p></div>
+      <div class="acts"><button onclick="inviteUser()"><svg class="i"><use href="#i-mail"/></svg>Invite</button><button class="pri" onclick="editUser()"><svg class="i"><use href="#i-plus"/></svg>Add user</button></div></div>
+    <div class="card flush">
+      <div class="tw"><table class="rt"><thead><tr><th>Username</th><th>E-mail</th><th>Role</th><th>Created</th><th>Last login</th><th></th></tr></thead><tbody id="userRows"></tbody></table></div>
+      <div class="hint" style="padding:12px 16px;margin:0;border-top:1px solid var(--line)"><b>admin</b>: full access including users. <b>viewer</b>: can see status, certificates, routers, settings and the log, but cannot change anything. Secrets are never shown to anyone.</div>
+    </div>
+    <div class="card flush" id="invCard" hidden>
+      <div class="row" style="padding:16px 16px 0"><h2>Pending invitations</h2></div>
+      <div class="tw"><table class="rt"><thead><tr><th>E-mail</th><th>Role</th><th>Invited by</th><th>Expires</th><th></th></tr></thead><tbody id="invRows"></tbody></table></div>
+    </div>
+  </section>
+  <section id="t-log" hidden>
+    <div class="ph"><div><h2>Log</h2><p>The last 500 events, newest at the bottom.</p></div></div>
+    <div class="card" style="padding:10px"><pre id="log" class="mono"></pre></div>
+  </section>
+</main>
+</div>
+
+<dialog id="certDlg"><form method="dialog" id="certForm">
+  <h3 id="certTitle">Certificate</h3>
+  <input type="hidden" name="id">
+  <label>Name</label><input type="text" name="name" placeholder="defaults to first domain">
+  <label>Domains</label><textarea name="domains" required placeholder="router.example.com&#10;*.example.com"></textarea>
+  <div class="hint">One per line. Wildcards (*.example.com) are supported with DNS validation.</div>
+  <div class="foot"><button type="button" class="del" id="certDel" style="margin-right:auto">Delete</button><button type="button" onclick="certDlg.close()">Cancel</button><button class="pri" value="save">Save</button></div>
+</form></dialog>
+
+<dialog id="rtDlg"><form method="dialog" id="rtForm">
+  <h3 id="rtTitle">Device</h3>
+  <input type="hidden" name="id">
+  <div class="grid">
+    <div><label>Name</label><input type="text" name="name"></div>
+    <div><label>Certificate</label><select name="certId" class="certSel"></select></div>
+  </div>
+  <label>Assign certificate to</label>
+  <label class="inl"><input type="checkbox" name="svc" value="www-ssl"> www-ssl (WebFig)</label>
+  <label class="inl"><input type="checkbox" name="svc" value="api-ssl"> api-ssl</label>
+  <label>Extra commands</label>
+  <textarea name="extraCommands" placeholder="# RouterOS script, {{cert}} = certificate name on the device&#10;/interface sstp-server server set certificate={{cert}}&#10;/ip hotspot profile set [find] ssl-certificate={{cert}}"></textarea>
+  <label class="inl" style="margin-top:12px"><input type="checkbox" name="enabled"> Enabled (deploy automatically)</label>
+  <div class="info lock" id="rtInfo"></div>
+  <div class="acts"><button type="button" id="rotBtn">Rotate password</button><button type="button" id="reBtn">Re-enroll</button><button type="button" class="del" id="rmBtn">Remove device</button></div>
+  <div class="foot"><button type="button" onclick="rtDlg.close()">Cancel</button><button class="pri" value="save">Save</button></div>
+</form></dialog>
+
+<dialog id="enrDlg"><form method="dialog" id="enrForm">
+  <h3 id="enrTitle">Enroll device</h3>
+  <div class="stepper"><span data-s="1">1. Connect</span>›<span data-s="2">2. Review &amp; confirm</span>›<span data-s="3">3. Result</span></div>
+  <input type="hidden" name="id">
+
+  <div data-step="1">
+    <div class="info">
+      Enrollment prepares a MikroTik device for <b>hands-off, secure certificate management</b>. Using an administrator
+      login <b>once</b>, RouterOS ACME will:
+      <ul>
+        <li>secure the device's <b>api-ssl</b> service with a TLS certificate and <b>pin</b> its fingerprint, so the app can't be tricked into talking to an impostor;</li>
+        <li>create a <b>dedicated service account</b> with only the rights needed for certificates. It can't use SSH, Winbox or WebFig, can't manage users and can't reboot;</li>
+        <li>give that account a <b>random 256-bit password that no person ever sees</b>, restrict it to this server's address and <b>rotate it automatically</b> every 30 days;</li>
+        <li>from then on, talk to the device <b>only over the encrypted API</b>. Private keys are uploaded encrypted, too.</li>
+      </ul>
+    </div>
+    <div class="grid">
+      <div><label>Device address (IP or hostname)</label><input type="text" name="host" placeholder="192.168.88.1"></div>
+      <div><label>SSH port</label><input type="number" name="sshPort" min="1" max="65535" value="22"></div>
+      <div><label>Admin username</label><input type="text" name="adminUser" value="admin" autocomplete="off"></div>
+      <div><label>Sign in with</label><select name="authKind" id="enrAuth"><option value="password">Password</option><option value="key">SSH private key</option></select></div>
+    </div>
+    <div id="enrPw"><label>Admin password</label><input type="password" name="adminPassword" autocomplete="new-password"></div>
+    <div id="enrKey" hidden><label>Admin private key (OpenSSH/PEM, no passphrase)</label><textarea name="adminKey" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></div>
+    <div class="info lock">🔒 <b>These admin credentials are used for this enrollment only.</b> They go straight to the device over SSH and are
+      <b>never saved or logged</b> by RouterOS ACME. You can change the admin password afterwards; it won't affect certificate management.</div>
+  </div>
+
+  <div data-step="2" hidden>
+    <dl class="kv" id="enrDev"></dl>
+    <div class="info warnbox" id="enrHostKeyBox">
+      <b>Is this the right device?</b> The SSH host key fingerprint is<br><span class="mono" id="enrHostKey"></span><br>
+      <span class="small">Compare it with the fingerprint your SSH client shows for this device. Only continue if they match.</span>
+      <label class="inl" style="display:flex;margin-top:10px"><input type="checkbox" name="confirmed"> Yes, this is my device</label>
+    </div>
+    <div class="info warnbox" id="enrWarn" hidden></div>
+    <div class="grid">
+      <div><label>Name</label><input type="text" name="name"></div>
+      <div><label>Certificate to deploy</label><select name="certId" class="certSel"></select></div>
+      <div><label>api-ssl port</label><input type="number" name="apiPort" min="1" max="65535"></div>
+      <div><label>Service account name</label><input type="text" name="serviceUser" value="routeros-acme" maxlength="32"></div>
+    </div>
+    <label>Service account may log in only from</label><input type="text" name="allowedFrom" placeholder="empty = any address">
+    <div class="hint">Detected: this is the address the device sees for RouterOS ACME. Use a CIDR (e.g. 10.0.0.0/24) if it can change, or leave it empty to allow any address.</div>
+    <label>Assign certificate to</label>
+    <label class="inl"><input type="checkbox" name="svc" value="www-ssl" checked> www-ssl (WebFig)</label>
+    <label class="inl"><input type="checkbox" name="svc" value="api-ssl"> api-ssl</label>
+    <label>Extra commands (optional)</label>
+    <textarea name="extraCommands" placeholder="# RouterOS script, {{cert}} = certificate name on the device"></textarea>
+    <label class="inl" style="margin-top:10px"><input type="checkbox" name="enabled" checked> Deploy automatically</label>
+    <div class="info"><b>Changes that will be made on the device</b><ul id="enrChanges"></ul></div>
+  </div>
+
+  <div data-step="3" hidden>
+    <ul class="steps" id="enrSteps"></ul>
+    <div class="info lock" id="enrDone" hidden></div>
+    <div class="info warnbox" id="enrFail" hidden></div>
+  </div>
+
+  <div class="foot">
+    <button type="button" id="enrBack" onclick="enrStep(enrCur - 1)">Back</button>
+    <button type="button" onclick="enrDlg.close()" id="enrCancel">Cancel</button>
+    <button class="pri" id="enrNext">Connect</button>
+  </div>
+</form></dialog>
+
+<dialog id="rmDlg" class="sm"><form method="dialog" id="rmForm">
+  <h3 id="rmTitle">Remove device</h3>
+  <input type="hidden" name="id">
+  <label class="inl"><input type="radio" name="mode" value="forget" checked> Only remove it from RouterOS ACME</label>
+  <div class="hint" id="rmForgetHint"></div>
+  <label class="inl" style="margin-top:8px"><input type="radio" name="mode" value="cleanup"> Also remove the service account from the device</label>
+  <div id="rmCreds" hidden>
+    <div class="hint">Needs an admin login once (not saved). The device's SSH host key must still match the one confirmed at enrollment.</div>
+    <label>Admin username</label><input type="text" name="adminUser" value="admin" autocomplete="off">
+    <label>Admin password</label><input type="password" name="adminPassword" autocomplete="new-password">
+  </div>
+  <div class="foot"><button type="button" onclick="rmDlg.close()">Cancel</button><button class="danger">Remove</button></div>
+</form></dialog>
+
+<dialog id="userDlg" class="sm"><form method="dialog" id="userForm">
+  <h3 id="userTitle">User</h3>
+  <input type="hidden" name="id">
+  <label>Username</label><input type="text" name="username" required maxlength="32" autocomplete="off">
+  <label>Role</label><select name="role"><option value="viewer">viewer – read-only</option><option value="admin">admin – full access</option></select>
+  <label>E-mail</label><input type="email" name="email" autocomplete="off">
+  <label class="inl" style="margin-top:8px"><input type="checkbox" name="notify"> Receive notification e-mails</label>
+  <label>Password</label><input type="password" name="password" maxlength="72" autocomplete="new-password">
+  <div class="hint" id="userPwHint"></div>
+  <div class="foot"><button type="button" onclick="userDlg.close()">Cancel</button><button class="pri" value="save">Save</button></div>
+</form></dialog>
+
+<dialog id="invDlg" class="sm"><form method="dialog" id="invForm">
+  <h3>Invite by e-mail</h3>
+  <div class="hint">The person gets a link (valid 72 hours) to choose their own username and password.</div>
+  <label>E-mail</label><input type="email" name="email" required>
+  <label>Role</label><select name="role"><option value="viewer">viewer – read-only</option><option value="admin">admin – full access</option></select>
+  <div id="invResult" hidden><label>Invitation link</label><input type="text" name="link" class="mono" readonly onclick="this.select()"><div class="hint" id="invMsg"></div></div>
+  <div class="foot"><button type="button" onclick="invDlg.close()">Close</button><button class="pri" value="save" id="invBtn">Send invitation</button></div>
+</form></dialog>
+
+<dialog id="acctDlg" class="sm"><form method="dialog" id="acctForm">
+  <h3>My account</h3>
+  <label>E-mail</label><input type="email" name="email" autocomplete="email">
+  <label class="inl" style="margin-top:8px"><input type="checkbox" name="notify"> Send me notification e-mails</label>
+  <div class="hint">Used for notifications and to reset a forgotten password.</div>
+  <div class="foot"><button type="button" onclick="acctDlg.close();pwDlg.showModal()">Change password…</button><button class="pri" value="save">Save</button></div>
+</form></dialog>
+
+<dialog id="pwDlg" class="sm"><form method="dialog" id="pwForm">
+  <h3>Change your password</h3>
+  <label>Current password</label><input type="password" name="current" autocomplete="current-password" required>
+  <label>New password</label><input type="password" name="new" minlength="8" maxlength="72" autocomplete="new-password" required>
+  <label>Repeat new password</label><input type="password" name="new2" autocomplete="new-password" required>
+  <div class="hint">Other devices signed in as you will be signed out.</div>
+  <div class="foot"><button type="button" onclick="pwDlg.close()">Cancel</button><button class="pri" value="save">Change</button></div>
+</form></dialog>
+
+<div id="toast"></div>
+
+<script>
+let S = {certs: [], routers: [], settings: {}, mail: {}}, tab = 'certs', me = null, users = [], invites = [], timer, resetEnabled = false, linkToken = '';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = t => t ? new Date(t).toLocaleString() : '—';
+const hasT = t => t && !t.startsWith('0001');
+const isAdmin = () => me?.role === 'admin';
+
+function toast(msg, bad) {
+  const t = $('#toast'); t.textContent = msg; t.style.background = bad ? 'var(--err)' : ''; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', bad ? 6000 : 2500);
+}
+async function api(method, path, body) {
+  const o = {method, headers: {}, credentials: 'same-origin'};
+  if (method !== 'GET') { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body ?? {}); }
+  const r = await fetch(path.replace(/^\//, ''), o); // relative: works when served under a sub-path
+  if (r.status === 401 && me) { showAuth('login'); throw new Error('Session expired, please sign in'); }
+  if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  return r.json();
+}
+async function act(method, path, msg, body) {
+  try { await api(method, path, body); if (msg) toast(msg); await refresh(); return true; }
+  catch (e) { toast(e.message, true); return false; }
+}
+
+// ---------- auth ----------
+async function boot() {
+  // e-mailed links: #invite=<token> or #reset=<token> (fragment never reaches server logs)
+  const m = location.hash.match(/^#(invite|reset)=([\w-]+)$/);
+  if (m) { linkToken = m[2]; history.replaceState(null, '', location.pathname + location.search); }
+  try {
+    const s = await api('GET', '/api/session');
+    resetEnabled = s.resetEnabled;
+    if (m && m[1] === 'reset') return showAuth('reset');
+    if (m && m[1] === 'invite') {
+      try {
+        const inv = await api('POST', '/api/invite/check', {token: linkToken});
+        $('#inviteInfo').innerHTML = `You were invited as <b>${esc(inv.role)}</b> (${esc(inv.email)}). Choose a username and password.`;
+        return showAuth('invite');
+      } catch (e) { toast(e.message, true); }
+    }
+    if (s.user) return startApp(s.user);
+    showAuth(s.setupRequired ? 'setup' : 'login');
+  } catch (e) { toast(e.message, true); }
+}
+function showAuth(mode = 'login') {
+  clearTimeout(timer); me = null;
+  document.querySelectorAll('dialog').forEach(d => d.open && d.close());
+  $('#app').hidden = true; $('#auth').hidden = false;
+  const forms = {setup: '#setupForm', login: '#loginForm', forgot: '#forgotForm', reset: '#resetForm', invite: '#inviteForm'};
+  for (const [k, sel] of Object.entries(forms)) $(sel).hidden = k !== mode;
+  $('#forgotLink').hidden = !resetEnabled;
+  const f = $(forms[mode]);
+  f.querySelector('.err-box').textContent = '';
+  f.querySelector('input:not([type=hidden])')?.focus();
+}
+function startApp(user) {
+  me = user;
+  document.body.classList.toggle('viewer', !isAdmin());
+  $('#meBtn').innerHTML = `<span class="av">${esc(me.username[0])}</span><span class="nm">${esc(me.username)}</span><span class="badge ${me.role}">${me.role}</span>`;
+  $('#setFs').disabled = $('#mailFs').disabled = !isAdmin(); $('#roNote').hidden = isAdmin();
+  $('#auth').hidden = true; $('#app').hidden = false;
+  if (tab === 'users' && !isAdmin()) tab = 'certs';
+  selectTab(tab);
+  loop();
+}
+// helper: submit an auth form, show errors inline
+function authSubmit(sel, fn) {
+  $(sel).onsubmit = async e => {
+    e.preventDefault(); const f = e.target, eb = f.querySelector('.err-box'); eb.textContent = '';
+    if (f.password2 && f.password.value !== f.password2.value) { eb.textContent = 'Passwords do not match'; return; }
+    try { await fn(f); } catch (err) { eb.textContent = err.message; }
+  };
+}
+authSubmit('#loginForm', async f => {
+  const u = await api('POST', '/api/login', {username: f.username.value, password: f.password.value});
+  f.password.value = ''; startApp(u);
+});
+authSubmit('#setupForm', async f => {
+  const u = await api('POST', '/api/setup', {code: f.code.value, username: f.username.value, email: f.email.value, password: f.password.value});
+  f.reset(); startApp(u);
+});
+authSubmit('#inviteForm', async f => {
+  const u = await api('POST', '/api/invite/accept', {token: linkToken, username: f.username.value, password: f.password.value});
+  f.reset(); linkToken = ''; toast('Welcome, ' + u.username + '!'); startApp(u);
+});
+authSubmit('#forgotForm', async f => {
+  const msg = await api('POST', '/api/forgot', {login: f.login.value});
+  f.reset(); showAuth('login'); toast(msg);
+});
+authSubmit('#resetForm', async f => {
+  const r = await api('POST', '/api/reset', {token: linkToken, password: f.password.value});
+  f.reset(); linkToken = ''; showAuth('login'); $('#loginForm').username.value = r.username; $('#loginForm').password.focus();
+  toast('Password changed – sign in with your new password');
+});
+$('#forgotLink').onclick = e => { e.preventDefault(); showAuth('forgot'); };
+async function logout() {
+  try { await api('POST', '/api/logout'); } catch (e) {}
+  showAuth('login');
+}
+function openAccount() {
+  const f = $('#acctForm'); f.email.value = me.email || ''; f.notify.checked = !!me.notify; acctDlg.showModal();
+}
+$('#acctForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  if (await act('PUT', '/api/me', 'Saved', {email: f.email.value, notify: f.notify.checked})) {
+    me.email = f.email.value.trim(); me.notify = f.notify.checked; acctDlg.close();
+  }
+};
+$('#pwForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  if (f.new.value !== f.new2.value) { toast('Passwords do not match', true); return; }
+  if (await act('PUT', '/api/me/password', 'Password changed', {current: f.current.value, new: f.new.value})) { f.reset(); pwDlg.close(); }
+};
+
+// ---------- tabs ----------
+function selectTab(t) {
+  tab = t;
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.t === t));
+  document.querySelectorAll('main > section').forEach(s => s.hidden = s.id !== 't-' + t);
+}
+$('#tabs').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  selectTab(b.dataset.t);
+  if (tab === 'settings') fillSettings();
+  refresh();
+};
+
+// ---------- rendering ----------
+const pill = (cls, t) => `<span class="pill ${cls}">${t}</span>`;
+const icon = n => `<svg class="i"><use href="#i-${n}"/></svg>`;
+const date = t => hasT(t) ? new Date(t).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}) : '—';
+const rel = t => {
+  if (!hasT(t)) return '—';
+  const m = Math.round((Date.now() - new Date(t)) / 6e4);
+  return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : date(t);
+};
+const daysLeft = c => Math.floor((new Date(c.notAfter) - Date.now()) / 864e5);
+function certStatus(c) {
+  if (c.lastError) return pill('err', 'Error') + `<div class="errtxt" title="${esc(c.lastError)}">${esc(c.lastError)}</div>`;
+  if (!hasT(c.notAfter)) return pill('warn', 'Not issued yet');
+  const d = daysLeft(c);
+  return d < 0 ? pill('err', 'Expired') : pill(d < S.settings.renewDays ? 'warn' : 'ok', d + ' days left');
+}
+function routerStatus(r) {
+  const c = S.certs.find(c => c.id === r.certId);
+  let s = !r.enrolled ? pill('warn', 'Not enrolled')
+    : !r.enabled ? pill('muted', 'Disabled')
+    : !c ? pill('muted', 'No certificate')
+    : c.fingerprint && r.deployedFingerprint === c.fingerprint ? pill('ok', 'Up to date')
+    : pill('warn', 'Pending');
+  if (r.lastError) s += `<div class="errtxt" title="${esc(r.lastError)}">${esc(r.lastError)}</div>`;
+  return s;
+}
+const isUpToDate = r => { const c = S.certs.find(c => c.id === r.certId); return r.enrolled && c?.fingerprint && r.deployedFingerprint === c.fingerprint; };
+function renderStats() {
+  const valid = S.certs.filter(c => hasT(c.notAfter) && daysLeft(c) >= 0).length;
+  const soon = S.certs.filter(c => hasT(c.notAfter) && daysLeft(c) < (S.mail?.warnDays || 14)).length;
+  const upd = S.routers.filter(isUpToDate).length;
+  const probs = S.certs.filter(c => c.lastError).length + S.routers.filter(r => r.lastError || !r.enrolled).length;
+  const tile = (cls, ic, n, t) => `<div class="stat"><span class="si ${cls}">${icon(ic)}</span><div><b>${n}</b><span>${t}</span></div></div>`;
+  $('#stats').innerHTML =
+    tile('acc', 'cert', `${valid}<small class="muted" style="font-size:13px;font-weight:500"> / ${S.certs.length}</small>`, 'Valid certificates') +
+    tile(soon ? 'warn' : 'ok', 'clock', soon, 'Expiring soon') +
+    tile('acc', 'router', `${upd}<small class="muted" style="font-size:13px;font-weight:500"> / ${S.routers.length}</small>`, 'Devices up to date') +
+    tile(probs ? 'err' : 'ok', 'alert', probs, probs === 1 ? 'Needs attention' : 'Need attention');
+}
+const cell = (label, html, cls = '') => `<td data-label="${label}" class="${cls}"><div class="v">${html}</div></td>`;
+const emptyRow = (cols, ic, html) => `<tr><td colspan="${cols}" class="empty">${icon(ic)}${html}</td></tr>`;
+function render() {
+  $('#status').classList.toggle('busy', S.busy);
+  $('#statusTxt').textContent = S.busy ? 'Working…' : 'Idle';
+  renderStats();
+  $('#certRows').innerHTML = S.certs.length ? S.certs.map(c => `<tr>
+    <td class="main">${esc(c.name)}</td>
+    ${cell('Domains', c.domains.map(esc).join('<br>'), 'small')}
+    ${cell('Expires', date(c.notAfter), 'small nw')}
+    ${cell('Status', certStatus(c))}
+    <td class="adm acts-cell"><div class="acts">
+      <button onclick="act('POST','/api/certs/${c.id}/issue','Renewal started')">Renew</button>
+      <button onclick="editCert('${c.id}')">Edit</button></div></td></tr>`).join('')
+    : emptyRow(5, 'cert', 'No certificates yet.<div class="small">Fill in <b>Settings</b> first, then add your first certificate.</div>');
+  $('#routerRows').innerHTML = S.routers.length ? S.routers.map(r => {
+    const c = S.certs.find(c => c.id === r.certId);
+    return `<tr>
+    <td class="main">${esc(r.name)}<div class="sub">${[r.board, r.version && 'RouterOS ' + r.version].filter(Boolean).map(esc).join(' · ')}</div></td>
+    ${cell('Connection', esc(r.host) + (r.enrolled ? `<div><span class="lockline" title="api-ssl with pinned certificate, service account ${esc(r.serviceUser)}">${icon('lock')}api-ssl :${r.apiPort}</span></div>` : ''), 'small')}
+    ${cell('Certificate', (c ? esc(c.name) : '—') + (c && r.services?.length ? `<div class="muted">${r.services.map(esc).join(', ')}</div>` : ''), 'small')}
+    ${cell('Last deploy', `<span title="${hasT(r.lastDeploy) ? fmt(r.lastDeploy) : ''}">${rel(r.lastDeploy)}</span>`, 'small nw')}
+    ${cell('Status', routerStatus(r))}
+    <td class="adm acts-cell"><div class="acts">
+      ${r.enrolled ? `<button onclick="testDevice('${r.id}')">Test</button>
+      <button onclick="act('POST','/api/routers/${r.id}/deploy','Deploy started')">Deploy</button>
+      <button onclick="editRouter('${r.id}')">Edit</button>`
+      : `<button class="pri" onclick="enrollWizard('${r.id}')">Enroll</button>
+      <button class="del" onclick="delRouter('${r.id}')">Remove</button>`}</div></td></tr>`;
+  }).join('') : emptyRow(6, 'router', 'No devices yet.<div class="small">Use <b>Enroll device</b> to add a MikroTik router.</div>');
+}
+function renderUsers() {
+  $('#userRows').innerHTML = users.map(u => `<tr>
+    <td class="main"><span style="display:inline-flex;align-items:center;gap:10px"><span class="av">${esc(u.username[0])}</span>${esc(u.username)}${u.id === me.id ? ' <span class="muted small">(you)</span>' : ''}</span></td>
+    ${cell('E-mail', (esc(u.email) || '—') + (u.notify ? ` <span class="badge" title="receives notifications">${icon('mail').replace('class="i"', 'class="i" style="width:13px;height:13px"')}</span>` : ''), 'small')}
+    ${cell('Role', `<span class="badge ${u.role}">${u.role}</span>`)}
+    ${cell('Created', date(u.created), 'small nw')}
+    ${cell('Last login', rel(u.lastLogin), 'small nw')}
+    <td class="acts-cell"><div class="acts"><button onclick="editUser('${u.id}')">Edit</button>
+      ${u.id === me.id ? '' : `<button class="del" onclick="delUser('${u.id}')">Delete</button>`}</div></td></tr>`).join('');
+  $('#invCard').hidden = !invites.length;
+  $('#invRows').innerHTML = invites.map(i => `<tr>
+    <td class="main">${esc(i.email)}</td>${cell('Role', `<span class="badge ${i.role}">${i.role}</span>`)}
+    ${cell('Invited by', esc(i.createdBy), 'small')}
+    ${cell('Expires', fmt(i.expires), 'small nw')}
+    <td class="acts-cell"><div class="acts"><button class="del" onclick="act('DELETE','/api/invites/${i.id}','Invitation revoked')">Revoke</button></div></td></tr>`).join('');
+}
+
+async function refresh() {
+  if (!me) return;
+  try {
+    S = await api('GET', '/api/state');
+    if (S.me && (S.me.role !== me.role || S.me.username !== me.username)) startApp(S.me); // role changed by an admin
+    if (S.me) Object.assign(me, S.me);
+    render();
+    if (tab === 'users' && isAdmin()) {
+      [users, invites] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/invites')]);
+      renderUsers();
+    }
+    if (tab === 'log') {
+      const L = await api('GET', '/api/logs'), el = $('#log');
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+      el.textContent = L.map(l => new Date(l.t).toLocaleString() + '  ' + l.msg).join('\n');
+      if (atBottom) el.scrollTop = el.scrollHeight;
+    }
+  } catch (e) { if (me) toast(e.message, true); }
+}
+function loop() {
+  clearTimeout(timer);
+  refresh().finally(() => { if (me) timer = setTimeout(loop, S.busy || tab === 'log' ? 2000 : 10000); });
+}
+
+// ---------- settings ----------
+function fillSettings() {
+  const f = $('#setForm'), s = S.settings;
+  f.email.value = s.email || ''; f.cfToken.value = ''; f.keyType.value = s.keyType;
+  f.renewDays.value = s.renewDays; f.checkHours.value = s.checkHours;
+  f.dnsResolvers.value = s.dnsResolvers || ''; f.staging.checked = !!s.staging;
+  f.cfToken.placeholder = s.hasCfToken ? '•••••••• (saved, leave empty to keep)' : 'not set';
+  const m = S.mail, g = $('#mailForm');
+  for (const k of ['host', 'port', 'security', 'user', 'from', 'publicUrl', 'warnDays', 'extraRecipients']) g[k].value = m[k] ?? '';
+  for (const k of ['notifyIssueOk', 'notifyIssueFail', 'notifyDeployOk', 'notifyDeployFail', 'notifyExpiry']) g[k].checked = !!m[k];
+  g.password.value = ''; g.password.placeholder = m.hasPassword ? '•••••••• (saved, leave empty to keep)' : '';
+  $('#mailState').innerHTML = m.host && m.from ? '<span class="pill ok">Configured</span>' : '<span class="pill muted">Not configured</span>';
+}
+$('#mailForm').onsubmit = async e => {
+  e.preventDefault(); const g = e.target, body = {};
+  for (const k of ['host', 'security', 'user', 'password', 'from', 'publicUrl', 'extraRecipients']) body[k] = g[k].value;
+  for (const k of ['port', 'warnDays']) body[k] = +g[k].value;
+  for (const k of ['notifyIssueOk', 'notifyIssueFail', 'notifyDeployOk', 'notifyDeployFail', 'notifyExpiry']) body[k] = g[k].checked;
+  if (await act('PUT', '/api/mail', 'E-mail settings saved', body)) fillSettings();
+};
+async function testMail() {
+  const to = prompt('Send a test e-mail to:', me.email || '');
+  if (to === null) return;
+  toast('Sending…');
+  try { toast('Test e-mail ' + await api('POST', '/api/mail/test', {to})); }
+  catch (e) { toast(e.message + ' (did you save the settings first?)', true); }
+}
+$('#setForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  if (await act('PUT', '/api/settings', 'Settings saved', {
+    email: f.email.value, cfToken: f.cfToken.value, keyType: f.keyType.value,
+    renewDays: +f.renewDays.value, checkHours: +f.checkHours.value,
+    dnsResolvers: f.dnsResolvers.value, staging: f.staging.checked })) fillSettings();
+};
+
+// ---------- certificates ----------
+function editCert(id) {
+  const c = S.certs.find(c => c.id === id) || {}, f = $('#certForm');
+  $('#certTitle').textContent = id ? 'Edit certificate' : 'Add certificate';
+  f.id.value = c.id || ''; f.name.value = c.name || ''; f.domains.value = (c.domains || []).join('\n');
+  $('#certDel').hidden = !id; $('#certDel').onclick = () => { certDlg.close(); delCert(id); };
+  certDlg.showModal();
+}
+$('#certForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  if (await act('POST', '/api/certs', 'Saved – issuing in the background',
+    {id: f.id.value, name: f.name.value, domains: f.domains.value.split('\n')})) certDlg.close();
+};
+function delCert(id) {
+  const c = S.certs.find(c => c.id === id);
+  if (confirm(`Delete certificate "${c.name}"?`)) act('DELETE', '/api/certs/' + id, 'Deleted');
+}
+
+// ---------- devices ----------
+function certOptions() {
+  document.querySelectorAll('.certSel').forEach(sel => sel.innerHTML = '<option value="">— none —</option>' +
+    S.certs.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join(''));
+}
+const ago = t => hasT(t) ? fmt(t) : '—';
+function editRouter(id) {
+  const r = S.routers.find(r => r.id === id), f = $('#rtForm');
+  certOptions();
+  $('#rtTitle').textContent = 'Device: ' + r.name;
+  f.id.value = r.id; f.name.value = r.name; f.certId.value = r.certId || '';
+  f.extraCommands.value = r.extraCommands || ''; f.enabled.checked = !!r.enabled;
+  f.querySelectorAll('[name=svc]').forEach(cb => cb.checked = (r.services || []).includes(cb.value));
+  $('#rtInfo').innerHTML = `<b>🔒 Secure connection</b><dl class="kv" style="margin-top:6px">
+    <dt>Address</dt><dd>${esc(r.host)} – api-ssl port ${r.apiPort}</dd>
+    <dt>Service account</dt><dd>${esc(r.serviceUser)}, login only from ${esc(r.allowedFrom || 'any address')}</dd>
+    <dt>Password</dt><dd>random, known only to this app · last rotated ${ago(r.rotatedAt)}</dd>
+    <dt>Pinned TLS cert</dt><dd class="mono">${(r.pins || []).map(p => esc(p.slice(0, 32)) + '…').join('<br>')}</dd>
+    <dt>SSH host key</dt><dd class="mono">${esc(r.sshHostKey)}</dd>
+    <dt>Enrolled</dt><dd>${ago(r.enrolledAt)} by ${esc(r.enrolledBy)}</dd>
+    <dt>Last seen</dt><dd>${ago(r.lastSeen)}</dd></dl>`;
+  $('#rotBtn').onclick = () => act('POST', `/api/routers/${r.id}/rotate`, 'Password rotation started – see Log');
+  $('#reBtn').onclick = () => { rtDlg.close(); enrollWizard(r.id); };
+  $('#rmBtn').onclick = () => { rtDlg.close(); delRouter(r.id); };
+  rtDlg.showModal();
+}
+$('#rtForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  const body = {id: f.id.value, name: f.name.value, certId: f.certId.value, extraCommands: f.extraCommands.value,
+    enabled: f.enabled.checked, services: [...f.querySelectorAll('[name=svc]:checked')].map(c => c.value)};
+  if (await act('POST', '/api/routers', 'Device saved', body)) rtDlg.close();
+};
+async function testDevice(id) {
+  toast('Connecting…');
+  try {
+    const i = await api('POST', `/api/routers/${id}/test`);
+    toast(`✓ ${i.identity}: RouterOS ${i.version}, up ${i.uptime} (TLS ${i.tls})`); refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+// enrollment wizard
+let enrCur = 1, enrProbe = null;
+function enrStep(n) {
+  enrCur = n;
+  document.querySelectorAll('#enrForm [data-step]').forEach(d => d.hidden = +d.dataset.step !== n);
+  document.querySelectorAll('.stepper span').forEach(s => s.classList.toggle('on', +s.dataset.s === n));
+  $('#enrBack').hidden = n !== 2;
+  $('#enrNext').hidden = false;
+  $('#enrNext').textContent = n === 1 ? 'Connect' : n === 2 ? 'Enroll device' : 'Done';
+  $('#enrCancel').hidden = n === 3;
+}
+function enrAuthUI() { const k = $('#enrAuth').value === 'key'; $('#enrKey').hidden = !k; $('#enrPw').hidden = k; }
+$('#enrAuth').onchange = enrAuthUI;
+function enrollWizard(id) {
+  const f = $('#enrForm'), r = S.routers.find(r => r.id === id);
+  f.reset(); certOptions(); enrProbe = null;
+  f.id.value = id || '';
+  $('#enrTitle').textContent = r ? 'Re-enroll ' + r.name : 'Enroll device';
+  if (r) {
+    f.host.value = r.host; f.sshPort.value = r.sshPort || 22; f.name.value = r.name;
+    f.certId.value = r.certId || ''; f.extraCommands.value = r.extraCommands || ''; f.enabled.checked = r.enabled;
+    f.querySelectorAll('[name=svc]').forEach(cb => cb.checked = (r.services || []).includes(cb.value));
+    if (r.serviceUser) f.serviceUser.value = r.serviceUser;
+  } else if (S.certs.length === 1) f.certId.value = S.certs[0].id;
+  enrAuthUI(); enrStep(1); enrDlg.showModal();
+}
+function enrLogin(f) {
+  const key = $('#enrAuth').value === 'key';
+  return {host: f.host.value.trim(), sshPort: +f.sshPort.value || 22, adminUser: f.adminUser.value.trim(),
+    adminPassword: key ? '' : f.adminPassword.value, adminKey: key ? f.adminKey.value : ''};
+}
+function enrChanges(f) {
+  const p = enrProbe, u = esc(f.serviceUser.value || 'routeros-acme');
+  const items = [
+    p.apiSslCert ? `keep api-ssl's certificate <b>${esc(p.apiSslCert)}</b> and pin its fingerprint`
+                 : 'add a self-signed certificate <b>routeros-acme-api</b> for api-ssl and pin its fingerprint',
+    `${p.apiSslDisabled ? '<b>enable</b>' : 'keep'} the api-ssl service on port <b>${+f.apiPort.value || 8729}</b> (other services stay as they are)`,
+    'add user group <b>routeros-acme</b>: api, read, write, ftp, sensitive, password. Denied: ssh, winbox, web, telnet, console, policy, reboot',
+    `${p.serviceUserExists ? 'take over' : 'add'} user <b>${u}</b> with a random password${f.allowedFrom.value ? `, allowed from <b>${esc(f.allowedFrom.value)}</b> only` : ''}`,
+    'verify the new login over api-ssl. If it fails, the user is removed again'];
+  $('#enrChanges').innerHTML = items.map(i => `<li>${i}</li>`).join('');
+}
+['serviceUser', 'allowedFrom', 'apiPort'].forEach(n => $('#enrForm')[n].addEventListener('input', () => enrProbe && enrChanges($('#enrForm'))));
+
+$('#enrForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target, btn = $('#enrNext');
+  if (enrCur === 3) { enrDlg.close(); return; }
+  btn.disabled = true;
+  try {
+    if (enrCur === 1) {
+      btn.textContent = 'Connecting…';
+      const p = await api('POST', '/api/devices/probe', {...enrLogin(f), serviceUser: f.serviceUser.value});
+      enrProbe = p;
+      $('#enrDev').innerHTML = `<dt>Identity</dt><dd>${esc(p.identity)}</dd><dt>Model</dt><dd>${esc(p.board)}</dd>
+        <dt>RouterOS</dt><dd>${esc(p.version)}</dd><dt>api-ssl</dt><dd>${p.apiSslDisabled ? 'disabled' : 'enabled'}, port ${p.apiSslPort}, certificate ${esc(p.apiSslCert || 'none')}</dd>`;
+      $('#enrHostKey').textContent = p.hostKey;
+      $('#enrWarn').hidden = !p.warnings?.length;
+      $('#enrWarn').innerHTML = (p.warnings || []).map(esc).join('<br>');
+      if (!f.name.value) f.name.value = p.identity;
+      f.apiPort.value = p.apiSslPort || 8729;
+      f.allowedFrom.value = p.sourceIp || '';
+      f.confirmed.checked = false;
+      enrChanges(f); enrStep(2);
+    } else if (enrCur === 2) {
+      if (!f.confirmed.checked) { toast('Confirm the device (host key) first', true); return; }
+      btn.textContent = 'Enrolling…';
+      const r = await api('POST', '/api/devices/enroll', {...enrLogin(f), hostKey: enrProbe.hostKey, id: f.id.value,
+        name: f.name.value, apiPort: +f.apiPort.value, serviceUser: f.serviceUser.value, allowedFrom: f.allowedFrom.value,
+        certId: f.certId.value, extraCommands: f.extraCommands.value, enabled: f.enabled.checked,
+        services: [...f.querySelectorAll('[data-step="2"] [name=svc]:checked')].map(c => c.value)});
+      f.adminPassword.value = ''; f.adminKey.value = '';   // don't keep them in the page either
+      $('#enrSteps').innerHTML = r.steps.map(s => `<li class="${s.ok ? 'ok' : 'bad'}"><span class="ico">${s.ok ? '✓' : '✗'}</span>
+        <span>${esc(s.title)}</span><span class="d">${esc(s.detail)}</span></li>`).join('');
+      $('#enrDone').hidden = !r.ok; $('#enrFail').hidden = r.ok;
+      $('#enrDone').innerHTML = `<b>Enrolled.</b> RouterOS ACME now manages this device over api-ssl only, with a pinned certificate
+        and its own restricted account. ${f.certId.value ? 'The certificate is deployed in the background. Watch the status in the device list.' : 'Pick a certificate under Edit to start deploying.'}`;
+      $('#enrFail').innerHTML = `<b>Enrollment did not complete:</b> ${esc(r.error || '')}<br>Nothing is left half-configured for login. Fix the problem and run enrollment again.`;
+      enrStep(3); refresh();
+    }
+  } catch (err) { toast(err.message, true); }
+  finally { btn.disabled = false; if (enrCur !== 3) btn.textContent = enrCur === 1 ? 'Connect' : 'Enroll device'; }
+};
+
+// remove
+function delRouter(id) {
+  const r = S.routers.find(r => r.id === id), f = $('#rmForm');
+  f.reset(); f.id.value = id; $('#rmCreds').hidden = true;
+  $('#rmTitle').textContent = 'Remove ' + r.name;
+  $('#rmForgetHint').innerHTML = r.enrolled ? `The service account <b>${esc(r.serviceUser)}</b> stays on the device until you remove it there. Certificates on the device are not touched.` : 'Nothing on the device is changed.';
+  f.querySelector('[value=cleanup]').disabled = !r.enrolled;
+  rmDlg.showModal();
+}
+$('#rmForm').addEventListener('change', e => { if (e.target.name === 'mode') $('#rmCreds').hidden = e.target.value !== 'cleanup'; });
+$('#rmForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  const body = f.mode.value === 'cleanup' ? {cleanup: {adminUser: f.adminUser.value, adminPassword: f.adminPassword.value}} : {};
+  try { toast(await api('DELETE', '/api/routers/' + f.id.value, body)); rmDlg.close(); refresh(); }
+  catch (err) { toast(err.message, true); }
+  f.adminPassword.value = '';
+};
+
+// ---------- users ----------
+function editUser(id) {
+  const u = users.find(u => u.id === id) || {role: 'viewer'}, f = $('#userForm');
+  $('#userTitle').textContent = id ? 'Edit user' : 'Add user';
+  f.id.value = u.id || ''; f.username.value = u.username || ''; f.role.value = u.role; f.password.value = '';
+  f.email.value = u.email || ''; f.notify.checked = !!u.notify;
+  f.password.required = !id;
+  $('#userPwHint').textContent = id ? 'Leave empty to keep the current password. Setting one signs the user out everywhere.' : 'At least 8 characters.';
+  userDlg.showModal();
+}
+$('#userForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  if (await act('POST', '/api/users', 'User saved', {id: f.id.value, username: f.username.value, role: f.role.value,
+    password: f.password.value, email: f.email.value, notify: f.notify.checked})) userDlg.close();
+};
+function inviteUser() {
+  const f = $('#invForm'); f.reset(); $('#invResult').hidden = true; $('#invBtn').hidden = false; invDlg.showModal();
+}
+$('#invForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  try {
+    const r = await api('POST', '/api/invites', {email: f.email.value, role: f.role.value});
+    f.link.value = r.link; $('#invResult').hidden = false; $('#invBtn').hidden = true;
+    $('#invMsg').innerHTML = r.emailed ? '<span class="ok">Invitation e-mailed.</span> You can also share the link yourself.'
+      : `<span class="warn">Not e-mailed${r.error ? ': ' + esc(r.error) : ' (e-mail is not configured)'}.</span> Send this link to the person yourself.`;
+    refresh();
+  } catch (err) { toast(err.message, true); }
+};
+function delUser(id) {
+  const u = users.find(u => u.id === id);
+  if (confirm(`Delete user "${u.username}"?`)) act('DELETE', '/api/users/' + id, 'User deleted');
+}
+
+// long error messages are clamped to 3 lines; tap to expand
+document.addEventListener('click', e => { const t = e.target.closest('.errtxt'); if (t) t.classList.toggle('open'); });
+// an invite/reset link opened in a tab that already shows this site only changes the hash
+window.addEventListener('hashchange', () => { if (/^#(invite|reset)=/.test(location.hash)) boot(); });
+boot();
+</script>
+</body>
+</html>

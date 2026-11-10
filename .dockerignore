@@ -1,0 +1,9 @@
+data
+*.md
+*_test.go
+.git
+docker-compose.yml
+docs
+.gitignore
+.dockerignore
+dist
