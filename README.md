@@ -1,7 +1,9 @@
 # routeros-acme
 
 Let's Encrypt certificates for MikroTik RouterOS, managed from a web UI.
-It is a lightweight replacement for running one `routeros-letsencrypt` container per router.
+It is a lightweight replacement for running one
+[`foorschtbar/routeros-letsencrypt`](https://hub.docker.com/r/foorschtbar/routeros-letsencrypt) container per router,
+and is inspired by that project (see [Credits](#credits)).
 
 - One small container (a static Go binary in a `scratch` image, about 10 MB) manages **many routers**.
 - **Device enrollment**: an admin login is used once, to set up a restricted service account. After that all
@@ -76,6 +78,7 @@ docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t routeros-
 | `LISTEN`         | `:8080`  | Web UI address |
 | `TZ`             | UTC      | Time zone for logs |
 | `SECRET_KEY`     | –        | Key for encrypting device secrets. Default: random key in `data/secret.key` |
+| `OTP_FRESH_MINUTES` | `5`   | How long a 2FA code counts for sensitive actions before you're asked again. `0` = ask every time |
 | `TRUSTED_PROXIES`| –        | Reverse proxy IPs/CIDRs (comma separated) or `private`. Only these may set `X-Forwarded-For` / `X-Forwarded-Proto` |
 | `BASE_PATH`      | –        | Serve under a sub-path, e.g. `/certs` |
 | `COOKIE_SECURE`  | `false`  | `true` always sets the Secure flag on the session cookie |
@@ -165,7 +168,7 @@ If it shows the proxy's IP instead of yours, `TRUSTED_PROXIES` is missing or wro
 
 | Role     | Can do |
 |----------|--------|
-| `admin`  | Everything: settings, certificates, routers, deploy/renew, and user management (**Users** tab) |
+| `admin`  | Everything: settings, certificates, routers, deploy/renew, and user management (**Users** tab). Must use 2FA |
 | `viewer` | See status, certificates, routers, settings and the log. Cannot change or trigger anything |
 
 - On first run the UI shows a setup page that creates the first admin. It needs the one-time
@@ -178,6 +181,35 @@ If it shows the proxy's IP instead of yours, `TRUSTED_PROXIES` is missing or wro
 - After 5 failed logins from one client IP address, logins from that address are blocked for 5 minutes. Behind a proxy this is the real client IP (see `TRUSTED_PROXIES`).
 - Lost the only admin password? Use *Forgot password?* if e-mail is set up. Otherwise stop the container and remove the `"users"` entries from `data/config.json`.
   On the next start you get a new setup code, or you can set `ADMIN_PASSWORD`.
+
+## Two-factor authentication
+
+Every **admin must use two-factor authentication** (TOTP codes from an authenticator app, such as Google or Microsoft
+Authenticator, Authy, 1Password or Bitwarden). Admins control routers, the Cloudflare DNS token and other users, so a
+password alone isn't enough.
+
+- **Setup:** right after first-run setup, an invitation, or being made admin, the UI asks you to scan a QR code (or type
+  the key) and confirm with a code. Nothing else is possible until 2FA is on. You then get **10 recovery codes**, shown
+  once. Each signs you in once if you lose your phone. Copy or download them before continuing.
+- **Signing in:** password, then the 6-digit code (or a recovery code). Each code works only once, and wrong codes are
+  rate-limited like wrong passwords.
+- **Sensitive actions ask for a fresh code** ("Confirm it's you"), even when you're signed in: enrolling a device,
+  removing a device with cleanup, a new Cloudflare token or SMTP password, switching off "2FA for everyone", creating or
+  promoting an admin, changing another user's password, inviting an admin, deleting a user, resetting someone's 2FA,
+  and new recovery codes. A code counts for 5 minutes (`OTP_FRESH_MINUTES`).
+- **Viewers:** 2FA is optional (*My account → Set up two-factor authentication*). Settings has a switch to
+  **require it for everyone**.
+- **Lost phone:** sign in with a recovery code, then make new codes under *My account*. An admin can also **Reset 2FA**
+  for another user (Users → Edit); that user sets it up again at the next sign-in.
+- **The only admin lost both phone and recovery codes:** stop the container and reset it from the command line. The
+  data directory is locked while the app runs, so this only works when it's stopped:
+  ```sh
+  docker compose stop
+  docker compose run --rm routeros-acme -reset-2fa <username>
+  docker compose start
+  ```
+- The 2FA secret is stored encrypted (like router secrets), and recovery codes only as hashes.
+- Passkeys (Face ID, Windows Hello, security keys) are planned as an additional option.
 
 ## Device enrollment
 
@@ -240,3 +272,15 @@ go test ./...          # auth/roles, invite/reset via fake SMTP, notifications, 
 ROS_HOST=127.0.0.1 ROS_SSH_PORT=2222 ROS_API_PORT=8729 ROS_USER=admin ROS_PASS=... go test -run Real -v .
 go run .               # DATA_DIR=./data LISTEN=:8080
 ```
+
+## Credits
+
+RouterOS ACME is inspired by
+[**foorschtbar/routeros-letsencrypt**](https://hub.docker.com/r/foorschtbar/routeros-letsencrypt) by
+[foorschtbar](https://github.com/foorschtbar): a container that gets Let's Encrypt certificates for a MikroTik router
+and installs them on it. It inspired the core features of this project: DNS validation, uploading the certificate
+to the router, assigning it to services such as `www-ssl` and `api-ssl`, and replacing the previous certificate.
+Thank you!
+
+RouterOS ACME is an independent project, written from scratch, and is not affiliated with or endorsed by
+foorschtbar. No code was copied.

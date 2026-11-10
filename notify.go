@@ -32,6 +32,18 @@ func (m *Manager) event(kind, key, text string) {
 	m.evMu.Unlock()
 }
 
+// send decrypts the SMTP password only for the moment of sending.
+func (m *Manager) send(ms MailSettings, to []string, subject, body string) error {
+	if m.sealer != nil {
+		pw, err := m.sealer.reveal(ms.Password)
+		if err != nil {
+			return fmt.Errorf("smtp password: %w", err)
+		}
+		ms.Password = pw
+	}
+	return m.mailer(ms, to, subject, body)
+}
+
 func kindEnabled(ms MailSettings, kind string) bool {
 	switch kind {
 	case evIssueOK:
@@ -114,7 +126,7 @@ func (m *Manager) flushEvents() {
 		return
 	}
 	subject, body := summarize(keep, cfg.Mail.PublicURL)
-	if err := m.mailer(cfg.Mail, to, subject, body); err != nil {
+	if err := m.send(cfg.Mail, to, subject, body); err != nil {
 		m.logf("notification e-mail failed: %v", err)
 		return
 	}

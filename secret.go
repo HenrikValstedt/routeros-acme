@@ -60,15 +60,26 @@ func (s *sealer) seal(plain string) string {
 	return "v1:" + base64.RawStdEncoding.EncodeToString(s.aead.Seal(nonce, nonce, []byte(plain), []byte("routeros-acme")))
 }
 
+func isSealed(v string) bool { return strings.HasPrefix(v, "v1:") }
+
+// reveal returns a stored secret in plain form: "" stays "", and a value written
+// before it was encrypted is returned as is.
+func (s *sealer) reveal(v string) (string, error) {
+	if v == "" || !isSealed(v) {
+		return v, nil
+	}
+	return s.open(v)
+}
+
 func (s *sealer) open(sealed string) (string, error) {
 	b, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(sealed, "v1:"))
 	if err != nil || !strings.HasPrefix(sealed, "v1:") || len(b) < s.aead.NonceSize() {
-		return "", errors.New("stored device secret is malformed")
+		return "", errors.New("a stored secret is malformed")
 	}
 	n := s.aead.NonceSize()
 	p, err := s.aead.Open(nil, b[:n], b[n:], []byte("routeros-acme"))
 	if err != nil {
-		return "", errors.New("cannot decrypt device secret (was secret.key / SECRET_KEY changed?) – re-enroll the device")
+		return "", errors.New("cannot decrypt a stored secret (was secret.key or SECRET_KEY changed?)")
 	}
 	return string(p), nil
 }

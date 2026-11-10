@@ -53,14 +53,20 @@ func randToken(n int) string {
 type session struct {
 	userID  string
 	expires time.Time
+	mfaWait bool      // password accepted, waiting for the 2FA code
+	fails   int       // wrong 2FA codes in this login attempt
+	fresh   time.Time // when a 2FA code was last entered (for sensitive actions)
+	oneShot bool      // the code was entered for one specific action (the "Confirm it's you" prompt)
 }
+
+const mfaWaitTTL = 5 * time.Minute
 
 type sessionStore struct {
 	mu sync.Mutex
 	m  map[string]session
 }
 
-func (s *sessionStore) create(userID string) string {
+func (s *sessionStore) create(userID string, mfaWait bool, fresh time.Time) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -69,20 +75,37 @@ func (s *sessionStore) create(userID string) string {
 			delete(s.m, k)
 		}
 	}
+	ttl := sessionTTL
+	if mfaWait {
+		ttl = mfaWaitTTL
+	}
 	t := randToken(32)
-	s.m[t] = session{userID, now.Add(sessionTTL)}
+	s.m[t] = session{userID: userID, expires: now.Add(ttl), mfaWait: mfaWait, fresh: fresh}
 	return t
 }
 
-func (s *sessionStore) get(token string) (string, bool) {
+func (s *sessionStore) get(token string) (session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v, ok := s.m[token]
 	if !ok || time.Now().After(v.expires) {
 		delete(s.m, token)
-		return "", false
+		return session{}, false
 	}
-	return v.userID, true
+	return v, true
+}
+
+// update changes a live session; fn returning false deletes it.
+func (s *sessionStore) update(token string, fn func(*session) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if v, ok := s.m[token]; ok {
+		if fn(&v) {
+			s.m[token] = v
+		} else {
+			delete(s.m, token)
+		}
+	}
 }
 
 func (s *sessionStore) remove(token string) {
@@ -205,11 +228,13 @@ func sessionToken(r *http.Request) string {
 }
 
 // sessionUser returns a copy of the logged-in user, or nil.
+// A session still waiting for its 2FA code is not logged in.
 func (a *app) sessionUser(r *http.Request) *User {
-	id, ok := a.sessions.get(sessionToken(r))
-	if !ok {
+	s, ok := a.sessions.get(sessionToken(r))
+	if !ok || s.mfaWait {
 		return nil
 	}
+	id := s.userID
 	var u *User
 	a.store.Read(func(c *Config) {
 		if x := c.user(id); x != nil {
@@ -221,11 +246,28 @@ func (a *app) sessionUser(r *http.Request) *User {
 }
 
 // need wraps a handler: role "" = any logged-in user, RoleAdmin = admins only.
-func (a *app) need(role string, h http.HandlerFunc) http.HandlerFunc {
+// A user who must use 2FA but hasn't set it up yet is refused (see needAny).
+func (a *app) need(role string, h http.HandlerFunc) http.HandlerFunc { return a.guard(role, false, h) }
+
+// needAny allows any logged-in user, also one who still has to set up 2FA
+// (for the 2FA setup itself, the session and logout).
+func (a *app) needAny(h http.HandlerFunc) http.HandlerFunc { return a.guard("", true, h) }
+
+func (a *app) mustSetup2FA(u *User) bool {
+	var req bool
+	a.store.Read(func(c *Config) { req = u.needs2FA(*c) })
+	return req && !u.has2FA()
+}
+
+func (a *app) guard(role string, setupOK bool, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		u := a.sessionUser(r)
 		if u == nil {
 			fail(w, http.StatusUnauthorized, errors.New("login required"))
+			return
+		}
+		if !setupOK && a.mustSetup2FA(u) {
+			fail(w, http.StatusForbidden, errors.New("mfa_setup_required: set up two-factor authentication first"))
 			return
 		}
 		if role == RoleAdmin && u.Role != RoleAdmin {
@@ -245,17 +287,19 @@ func (a *app) setCookie(w http.ResponseWriter, r *http.Request, token string, ma
 }
 
 type userView struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Role      string    `json:"role"`
-	Email     string    `json:"email"`
-	Notify    bool      `json:"notify"`
-	Created   time.Time `json:"created"`
-	LastLogin time.Time `json:"lastLogin,omitzero"`
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Role         string    `json:"role"`
+	Email        string    `json:"email"`
+	Notify       bool      `json:"notify"`
+	Created      time.Time `json:"created"`
+	LastLogin    time.Time `json:"lastLogin,omitzero"`
+	TOTP         bool      `json:"totp"`         // 2FA is on
+	RecoveryLeft int       `json:"recoveryLeft"` // unused recovery codes
 }
 
 func viewOf(u *User) userView {
-	return userView{u.ID, u.Username, u.Role, u.Email, u.Notify, u.Created, u.LastLogin}
+	return userView{u.ID, u.Username, u.Role, u.Email, u.Notify, u.Created, u.LastLogin, u.has2FA(), len(u.Recovery)}
 }
 
 // ---- handlers ----
@@ -263,9 +307,14 @@ func viewOf(u *User) userView {
 func (a *app) getSession(w http.ResponseWriter, r *http.Request) {
 	var setup bool
 	a.store.Read(func(c *Config) { setup = len(c.Users) == 0 })
-	resp := map[string]any{"setupRequired": setup, "user": nil, "resetEnabled": a.resetEnabled()}
+	resp := map[string]any{"setupRequired": setup, "user": nil, "resetEnabled": a.resetEnabled(),
+		"mfaPending": false, "mfaSetupRequired": false}
+	if s, ok := a.sessions.get(sessionToken(r)); ok && s.mfaWait {
+		resp["mfaPending"] = true
+	}
 	if u := a.sessionUser(r); u != nil {
 		resp["user"] = viewOf(u)
+		resp["mfaSetupRequired"] = a.mustSetup2FA(u)
 	}
 	writeJSON(w, resp)
 }
@@ -326,7 +375,7 @@ func (a *app) postSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mgr.logf("setup: admin user %q created from %s", u.Username, ip)
-	a.setCookie(w, r, a.sessions.create(u.ID), int(sessionTTL.Seconds()))
+	a.setCookie(w, r, a.sessions.create(u.ID, false, time.Time{}), int(sessionTTL.Seconds()))
 	writeJSON(w, viewOf(u))
 }
 
@@ -345,9 +394,10 @@ func (a *app) postLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var id, hash string
+	var twoFA bool
 	a.store.Read(func(c *Config) {
 		if u := c.userByName(strings.TrimSpace(in.Username)); u != nil {
-			id, hash = u.ID, u.Hash
+			id, hash, twoFA = u.ID, u.Hash, u.has2FA()
 		}
 	})
 	if id == "" {
@@ -360,16 +410,16 @@ func (a *app) postLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.throttle.ok(ip)
-	var u userView
-	_ = a.store.Update(func(c *Config) error {
-		if x := c.user(id); x != nil {
-			x.LastLogin = time.Now()
-			u = viewOf(x)
-		}
-		return nil
-	})
-	a.setCookie(w, r, a.sessions.create(id), int(sessionTTL.Seconds()))
-	writeJSON(w, u)
+	if twoFA {
+		// password is right; the session only becomes a login after the 2FA code (postLoginOTP)
+		a.setCookie(w, r, a.sessions.create(id, true, time.Time{}), int(mfaWaitTTL.Seconds()))
+		writeJSON(w, map[string]bool{"mfa": true})
+		return
+	}
+	a.setCookie(w, r, a.sessions.create(id, false, time.Time{}), int(sessionTTL.Seconds()))
+	v := a.touchLogin(id)
+	a.mgr.logf("user %q signed in from %s (password only, no 2FA)", v.Username, ip)
+	writeJSON(w, v)
 }
 
 func (a *app) postLogout(w http.ResponseWriter, r *http.Request) {
@@ -438,6 +488,17 @@ func (a *app) saveUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Username = strings.TrimSpace(in.Username)
+	// creating or promoting an admin, or changing an existing user's password
+	// (an account takeover), needs a fresh 2FA code
+	var wasAdmin bool
+	a.store.Read(func(c *Config) {
+		if x := c.user(in.ID); x != nil {
+			wasAdmin = x.Role == RoleAdmin
+		}
+	})
+	if ((in.ID != "" && in.Password != "") || (in.Role == RoleAdmin && !wasAdmin)) && !a.requireFresh(w, r) {
+		return
+	}
 	email, err := parseEmail(in.Email)
 	if err != nil {
 		fail(w, 400, err)

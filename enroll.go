@@ -94,6 +94,9 @@ func (a *app) putMail(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
+	if in.Password != "" && !a.requireFresh(w, r) {
+		return
+	}
 	in.Host, in.User = strings.TrimSpace(in.Host), strings.TrimSpace(in.User)
 	var err error
 	if in.From, err = parseEmail(in.From); err != nil {
@@ -127,7 +130,7 @@ func (a *app) putMail(w http.ResponseWriter, r *http.Request) {
 	err = a.store.Update(func(c *Config) error {
 		pw := c.Mail.Password
 		if in.Password != "" {
-			pw = in.Password
+			pw = a.mgr.sealer.seal(in.Password) // stored encrypted
 		}
 		if in.User == "" {
 			pw = ""
@@ -160,7 +163,7 @@ func (a *app) testMail(w http.ResponseWriter, r *http.Request) {
 	}
 	ms := a.store.Snapshot().Mail
 	body := fmt.Sprintf("This is a test message from RouterOS ACME, sent by %s.\n\nIf you can read this, e-mail delivery works.\n", me.Username)
-	if err := a.mgr.mailer(ms, []string{to}, "[RouterOS ACME] Test e-mail", body); err != nil {
+	if err := a.mgr.send(ms, []string{to}, "[RouterOS ACME] Test e-mail", body); err != nil {
 		a.mgr.logf("test e-mail to %s failed: %v", to, err)
 		fail(w, 400, err)
 		return
@@ -243,6 +246,9 @@ func (a *app) createInvite(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, errors.New("role must be admin or viewer"))
 		return
 	}
+	if in.Role == RoleAdmin && !a.requireFresh(w, r) {
+		return
+	}
 	raw := randToken(24)
 	var ms MailSettings
 	err = a.store.Update(func(c *Config) error {
@@ -273,7 +279,7 @@ func (a *app) createInvite(w http.ResponseWriter, r *http.Request) {
 		body := fmt.Sprintf("Hello,\n\n%s has invited you to RouterOS ACME with the role %q.\n\n"+
 			"Open this link to choose your username and password (valid for %d hours):\n\n%s\n\n"+
 			"If you didn't expect this invitation you can ignore this e-mail.\n", me.Username, in.Role, int(inviteTTL.Hours()), link)
-		if err := a.mgr.mailer(ms, []string{email}, "[RouterOS ACME] You have been invited", body); err != nil {
+		if err := a.mgr.send(ms, []string{email}, "[RouterOS ACME] You have been invited", body); err != nil {
 			resp["error"] = err.Error()
 			a.mgr.logf("invite e-mail to %s failed: %v", email, err)
 		} else {
@@ -361,7 +367,7 @@ func (a *app) acceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mgr.logf("user %q (%s, %s) joined via invitation from %s", u.Username, u.Email, u.Role, ip)
-	a.setCookie(w, r, a.sessions.create(u.ID), int(sessionTTL.Seconds()))
+	a.setCookie(w, r, a.sessions.create(u.ID, false, time.Time{}), int(sessionTTL.Seconds()))
 	writeJSON(w, viewOf(u))
 }
 
@@ -423,7 +429,7 @@ func (a *app) forgotPassword(w http.ResponseWriter, r *http.Request) {
 				"Open this link to choose a new password (valid for %d minutes):\n\n%s\n\n"+
 				"If you didn't request this, you can ignore this e-mail. Your password stays unchanged.\n",
 				user.Username, ip, int(resetTTL.Minutes()), link)
-			if err := a.mgr.mailer(ms, []string{user.Email}, "[RouterOS ACME] Password reset", body); err != nil {
+			if err := a.mgr.send(ms, []string{user.Email}, "[RouterOS ACME] Password reset", body); err != nil {
 				a.mgr.logf("password reset e-mail for %q failed: %v", user.Username, err)
 				return
 			}

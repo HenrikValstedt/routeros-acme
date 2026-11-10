@@ -212,7 +212,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
 <section class="hero" id="overview">
   <div class="wrap">
     <div>
-      <div class="eyebrow">Self-hosted · one small container · v1.0.1</div>
+      <div class="eyebrow">Self-hosted · one small container · v1.1.0</div>
       <h1 style="margin-top:12px">Let's Encrypt for your <span>MikroTik routers</span>, without the scripts.</h1>
       <p class="lede">RouterOS ACME issues and renews certificates through Cloudflare DNS and installs them on your routers over the encrypted RouterOS API. You enroll each router once from the web UI. After that it runs by itself.</p>
       <div class="chips">
@@ -231,7 +231,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
 <section class="band" id="features">
   <div class="wrap">
     <div class="head"><div class="eyebrow">What it does</div><h2>One place for every router certificate</h2>
-      <p class="lede">It replaces a container per router with a single service that knows all your certificates and devices.</p></div>
+      <p class="lede">It replaces a container per router with a single service that knows all your certificates and devices. Inspired by <a href="https://hub.docker.com/r/foorschtbar/routeros-letsencrypt" target="_blank" rel="noopener">foorschtbar/routeros-letsencrypt</a>.</p></div>
     <div class="features">
       <div class="feat"><span class="ic"><svg><use href="#i-cert"/></svg></span><h3>Certificates via DNS</h3>
         <p>Let's Encrypt validates through a Cloudflare TXT record, so wildcards work and nothing has to be open to the internet. One wildcard can serve many routers.</p></div>
@@ -240,7 +240,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
       <div class="feat"><span class="ic"><svg><use href="#i-box"/></svg></span><h3>Automatic renewal</h3>
         <p>Every 12 hours it renews what expires within 30 days and pushes it to www-ssl, api-ssl, or anything else you script.</p></div>
       <div class="feat"><span class="ic"><svg><use href="#i-users"/></svg></span><h3>Users and roles</h3>
-        <p>Admins change things; viewers can only look. Invite people by e-mail and let them choose their own password.</p></div>
+        <p>Admins change things; viewers can only look. Admins must use two-factor authentication. Invite people by e-mail and let them choose their own password.</p></div>
       <div class="feat"><span class="ic"><svg><use href="#i-mail"/></svg></span><h3>Notifications</h3>
         <p>One summary e-mail when a renewal or deploy fails, a certificate is about to expire, or a new one was installed.</p></div>
       <div class="feat"><span class="ic"><svg><use href="#i-lock"/></svg></span><h3>Built to be trusted</h3>
@@ -321,6 +321,7 @@ docker compose logs | grep "Setup code"
       <div class="step">
         <div class="txt"><div class="num"></div><h3>Create the admin account</h3>
           <p>Open <code>http://&lt;host&gt;:8080</code>, enter the setup code and choose a username and password. The setup code makes sure nobody else on your network can claim the instance first.</p>
+          <p>Next, scan the QR code with an authenticator app to turn on <b>two-factor authentication</b>, which every admin needs, and save the 10 recovery codes.</p>
           <p>Prefer no setup page? Set <code>ADMIN_USER</code> and <code>ADMIN_PASSWORD</code> for the first start.</p></div>
         <div class="win"><div class="bar"><i></i><i></i><i></i></div><img class="zoom" src="screenshots/desktop-01-login.png" alt="Sign-in page" loading="lazy" width="1280" height="860"></div>
       </div>
@@ -371,11 +372,13 @@ docker compose logs | grep "Setup code"
     <div class="head"><div class="eyebrow">Security</div><h2>What enrollment changes, and why it's safe</h2>
       <p class="lede">The goal is that RouterOS ACME can do one job on your routers and nothing else, with no human password to leak.</p></div>
     <div class="guards">
+      <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Two-factor authentication for admins</b><p>A code from an authenticator app at every sign-in, and again before enrolling a device, changing DNS credentials or adding admins. Recovery codes cover a lost phone.</p></div></div>
       <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Admin logins are never stored</b><p>The SSH login is used for enrollment only, then discarded. Changing your admin password later changes nothing.</p></div></div>
       <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Pinned TLS to every router</b><p>api-ssl's certificate fingerprint is pinned at enrollment. An impostor device is refused, even on a bare IP address.</p></div></div>
       <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>A least-privilege account</b><p>API only. No SSH, Winbox, WebFig or console, no user management, no reboot. Login limited to this server's address.</p></div></div>
       <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>A password nobody knows</b><p>256 random bits, encrypted at rest, rotated automatically every 30 days. RouterOS's API has no key login, so this is the passwordless equivalent.</p></div></div>
       <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Keys stay out of router logs</b><p>RouterOS logs uploaded file contents, so private keys are uploaded encrypted with a one-time passphrase.</p></div></div>
+      <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Guessing is throttled</b><p>Five wrong passwords or codes from one address lock it out for five minutes. Behind a proxy that's the real client address.</p></div></div>
       <div class="guard"><span class="tick"><svg><use href="#i-check"/></svg></span><div><b>Clean removal</b><p>Removing a device can also delete its service account from the router, using an admin login once.</p></div></div>
     </div>
     <div class="changes">
@@ -430,18 +433,18 @@ docker compose logs | grep "Setup code"
       <div class="tablewrap"><table>
         <thead><tr><th>Tag</th><th>Points to</th><th>Use it for</th></tr></thead>
         <tbody>
-          <tr><td>1.0.1</td><td>this release</td><td>Servers. Nothing changes until you change the tag</td></tr>
-          <tr><td>1.0</td><td>newest 1.0.x</td><td>Picking up fixes automatically on the next pull</td></tr>
+          <tr><td>1.1.0</td><td>this release</td><td>Servers. Nothing changes until you change the tag</td></tr>
+          <tr><td>1.1</td><td>newest 1.1.x</td><td>Picking up fixes automatically on the next pull</td></tr>
           <tr><td>latest</td><td>newest main build</td><td>Trying the newest changes</td></tr>
-          <tr><td>sha-deb9f18</td><td>one commit</td><td>Going back to an exact build</td></tr>
+          <tr><td>sha-1a2b3c4</td><td>one commit</td><td>Going back to an exact build</td></tr>
         </tbody></table></div>
       <div class="notes">
         <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># pin the tag in docker-compose.yml,</span>
-<span class="c"># e.g. image: …/routeros-acme:1.0.1</span>
+<span class="c"># e.g. image: …/routeros-acme:1.1.0</span>
 docker compose pull
 docker compose up -d
 docker compose logs | head -1
-<span class="c"># RouterOS ACME 1.0.1</span></pre></div>
+<span class="c"># RouterOS ACME 1.1.0</span></pre></div>
         <div class="note"><b>Access for colleagues</b>Add them as collaborators on the GitHub repository. They log in to ghcr.io with their own token; nobody shares yours.</div>
         <div class="note"><b>What changed</b>Every version has release notes on the repository's Releases page. Upgrades keep <code>data/</code> as it is.</div>
       </div>
@@ -463,6 +466,7 @@ docker compose logs | head -1
           <tr><td>BASE_PATH</td><td>–</td><td>Serve under a sub-path such as <code>/certs</code></td></tr>
           <tr><td>COOKIE_SECURE</td><td>false</td><td>Always mark the session cookie Secure</td></tr>
           <tr><td>SECRET_KEY</td><td>secret.key</td><td>Key that encrypts router secrets. By default a random key file in data/</td></tr>
+          <tr><td>OTP_FRESH_MINUTES</td><td>5</td><td>How long a 2FA code counts for sensitive actions. 0 = ask every time</td></tr>
           <tr><td>LISTEN</td><td>:8080</td><td>Address of the web UI</td></tr>
           <tr><td>DATA_DIR</td><td>/data</td><td>Config, ACME account, certificates</td></tr>
           <tr><td>TZ</td><td>UTC</td><td>Time zone for the log</td></tr>
@@ -478,7 +482,7 @@ docker compose logs | head -1
 </section>
 </main>
 
-<footer><div class="wrap"><span>RouterOS ACME 1.0.1 · self-hosted certificate management for MikroTik</span><span>Screenshots show demo data, plus a real enrollment on a RouterOS 7.25.1 test VM.</span></div></footer>
+<footer><div class="wrap"><span>RouterOS ACME 1.1.0 · self-hosted certificate management for MikroTik · inspired by <a href="https://hub.docker.com/r/foorschtbar/routeros-letsencrypt" target="_blank" rel="noopener">foorschtbar/routeros-letsencrypt</a></span><span>Screenshots show demo data, plus a real enrollment on a RouterOS 7.25.1 test VM.</span></div></footer>
 
 <div class="lb" id="lb" hidden><img alt=""></div>
 

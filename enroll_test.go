@@ -149,6 +149,7 @@ func TestInviteAndReset(t *testing.T) {
 	f := startFakeSMTP(t)
 	admin := newClient(t, srv)
 	admin.expect(200, "POST", "/api/setup", map[string]string{"code": a.setupCode, "username": "boss", "password": "supersecret", "email": "boss@example.org"})
+	admin.turnOn2FA()
 
 	// configure mail through the API
 	ms := f.settings()

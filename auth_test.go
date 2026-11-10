@@ -9,7 +9,22 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+// turnOn2FA sets up TOTP for the signed-in user and returns the secret.
+func (c *client) turnOn2FA() string {
+	c.t.Helper()
+	var setup struct {
+		Secret string `json:"secret"`
+		QR     string `json:"qr"`
+	}
+	if err := json.Unmarshal([]byte(c.expect(200, "POST", "/api/me/2fa/setup", map[string]string{})), &setup); err != nil {
+		c.t.Fatal(err)
+	}
+	c.expect(200, "POST", "/api/me/2fa/enable", map[string]string{"code": totpCode(setup.Secret, time.Now())})
+	return setup.Secret
+}
 
 type client struct {
 	t   *testing.T
@@ -59,6 +74,8 @@ func newTestApp(t *testing.T) (*app, *httptest.Server) {
 	}
 	a := &app{store: st, mgr: NewManager(st, dir), dataDir: dir, sessions: &sessionStore{m: map[string]session{}}}
 	a.throttle, a.mailThrottle = newThrottle(), newThrottle()
+	a.mgr.sealer, _ = loadSealer(dir)
+	a.otpFresh = 5 * time.Minute
 	if err := a.initUsers(); err != nil {
 		t.Fatal(err)
 	}
@@ -84,6 +101,8 @@ func TestAuthFlow(t *testing.T) {
 	anon.expect(400, "POST", "/api/setup", map[string]string{"code": a.setupCode, "username": "boss", "password": "short"})
 	admin := newClient(t, srv)
 	admin.expect(200, "POST", "/api/setup", map[string]string{"code": a.setupCode, "username": "boss", "password": "supersecret"})
+	admin.expect(403, "GET", "/api/state", nil) // admins must set up 2FA before anything else
+	admin.turnOn2FA()
 	// setup cannot be repeated
 	anon.expect(400, "POST", "/api/setup", map[string]string{"code": "", "username": "evil", "password": "supersecret"})
 
@@ -135,6 +154,8 @@ func TestAuthFlow(t *testing.T) {
 	// promote viewer to admin, then it can manage users; deleting removes access
 	admin.expect(200, "POST", "/api/users", map[string]string{"id": watcherID, "username": "watcher", "role": "admin"})
 	viewer.expect(200, "POST", "/api/login", map[string]string{"username": "watcher", "password": "resetpass1"})
+	viewer.expect(403, "GET", "/api/users", nil) // a new admin must set up 2FA first
+	viewer.turnOn2FA()
 	viewer.expect(200, "GET", "/api/users", nil)
 	admin.expect(200, "DELETE", "/api/users/"+watcherID, nil)
 	viewer.expect(401, "GET", "/api/state", nil)

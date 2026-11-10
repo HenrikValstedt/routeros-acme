@@ -187,6 +187,16 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
 #auth h2{margin:0 0 4px;font-size:21px;letter-spacing:-.02em}
 #auth .brand{flex:none;font-size:18px}
 .err-box{color:var(--err);font-size:13px;min-height:1.2em;margin-top:10px}
+#auth .card.wide{width:min(480px,100%)}
+.otp-in{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:22px!important;letter-spacing:.35em;text-align:center}
+.mfa-steps{padding-left:20px;display:grid;gap:16px;margin:16px 0 0}
+.mfa-steps li::marker{font-weight:700;color:var(--acc)}
+.qr{width:196px;height:196px;margin:12px 0 8px;background:#fff;border-radius:12px;overflow:hidden;border:1px solid var(--line)}
+.qr svg{display:block;width:100%;height:100%}
+.reccodes{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;background:var(--bg2);border:1px solid var(--line);border-radius:12px;
+  padding:14px 16px;margin:12px 0;font-size:14.5px;letter-spacing:.04em}
+.badge.on{color:var(--ok);background:var(--ok-bg)}.badge.off{color:var(--warn);background:var(--warn-bg)}
+.mfabox{display:grid;gap:10px}.mfabox .row{margin:0}
 
 /* ---- phones ---- */
 @media (max-width:760px){
@@ -311,6 +321,28 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
     <div class="err-box"></div>
     <div class="foot"><button class="pri">Create account &amp; sign in</button></div>
   </form>
+  <form class="card" id="otpForm" hidden>
+    <h2>Two-step verification</h2>
+    <div class="muted small">Enter the 6-digit code from your authenticator app.</div>
+    <label for="otpCode">Code</label>
+    <input type="text" id="otpCode" name="code" class="otp-in" inputmode="numeric" autocomplete="one-time-code" maxlength="11" required>
+    <div class="hint">Lost your phone? Enter one of your recovery codes instead.</div>
+    <div class="err-box"></div>
+    <div class="foot" style="justify-content:space-between"><button type="button" onclick="logout()">Back</button><button class="pri">Verify</button></div>
+  </form>
+  <form class="card wide" id="mfaForm" hidden>
+    <h2>Set up two-factor authentication</h2>
+    <div class="muted small" id="mfaWhy"></div>
+    <ol class="mfa-steps">
+      <li><b>Scan this QR code</b> with an authenticator app, such as Google or Microsoft Authenticator, Authy, 1Password or Bitwarden.
+        <div class="qr" id="mfaQr"></div>
+        <div class="hint">Can't scan it? Enter this key in the app instead:<br><span class="mono" id="mfaKey"></span> · <a href="#" id="mfaKeyCopy">Copy</a></div></li>
+      <li><b>Enter the 6-digit code</b> the app now shows.
+        <input type="text" id="mfaCode" name="code" class="otp-in" inputmode="numeric" autocomplete="one-time-code" maxlength="6" style="margin-top:8px"></li>
+    </ol>
+    <div class="err-box"></div>
+    <div class="foot" style="justify-content:space-between"><button type="button" id="mfaCancel">Sign out</button><button class="pri">Turn on</button></div>
+  </form>
 </div>
 
 <div id="app" hidden>
@@ -353,6 +385,7 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
         <div><label>DNS resolvers for propagation check</label><input type="text" name="dnsResolvers" placeholder="1.1.1.1, 8.8.8.8 (optional)"></div>
       </div>
       <label class="inl" style="margin-top:12px"><input type="checkbox" name="staging"> Use Let's Encrypt staging (for testing, certs are not trusted)</label>
+      <label class="inl" style="display:flex;margin-top:10px"><input type="checkbox" name="require2fa"> Require two-factor authentication for everyone (admins always need it)</label>
       <div class="foot adm"><button class="pri">Save settings</button></div>
     </fieldset></form>
     <form class="card" id="mailForm"><fieldset id="mailFs">
@@ -519,6 +552,7 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
   <label class="inl" style="margin-top:8px"><input type="checkbox" name="notify"> Receive notification e-mails</label>
   <label>Password</label><input type="password" name="password" maxlength="72" autocomplete="new-password">
   <div class="hint" id="userPwHint"></div>
+  <div id="userMfa" class="info" hidden></div>
   <div class="foot"><button type="button" onclick="userDlg.close()">Cancel</button><button class="pri" value="save">Save</button></div>
 </form></dialog>
 
@@ -536,7 +570,26 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
   <label>E-mail</label><input type="email" name="email" autocomplete="email">
   <label class="inl" style="margin-top:8px"><input type="checkbox" name="notify"> Send me notification e-mails</label>
   <div class="hint">Used for notifications and to reset a forgotten password.</div>
+  <div class="info mfabox" id="mfaBox"></div>
   <div class="foot"><button type="button" onclick="acctDlg.close();pwDlg.showModal()">Change password…</button><button class="pri" value="save">Save</button></div>
+</form></dialog>
+
+<dialog id="recDlg" class="sm"><form method="dialog" id="recForm">
+  <h3>Save your recovery codes</h3>
+  <div class="hint">Each code signs you in once if you lose your phone. Keep them somewhere safe, such as a password manager. They won't be shown again.</div>
+  <div class="reccodes mono" id="recList"></div>
+  <div class="acts"><button type="button" id="recCopy">Copy</button><button type="button" id="recDl">Download</button></div>
+  <label class="inl" style="display:flex;margin-top:14px"><input type="checkbox" id="recSaved" name="saved"> I've saved these codes</label>
+  <div class="foot"><button class="pri" id="recDone" disabled>Done</button></div>
+</form></dialog>
+
+<dialog id="otpDlg" class="sm"><form method="dialog" id="otpDlgForm">
+  <h3 id="otpDlgTitle">Confirm it's you</h3>
+  <div class="hint" id="otpDlgHint">This change needs a fresh code from your authenticator app.</div>
+  <label for="otpDlgCode">Code</label>
+  <input type="text" id="otpDlgCode" name="code" class="otp-in" inputmode="numeric" autocomplete="one-time-code" maxlength="11">
+  <div class="err-box"></div>
+  <div class="foot"><button type="button" id="otpDlgCancel">Cancel</button><button class="pri">Confirm</button></div>
 </form></dialog>
 
 <dialog id="pwDlg" class="sm"><form method="dialog" id="pwForm">
@@ -562,12 +615,21 @@ function toast(msg, bad) {
   const t = $('#toast'); t.textContent = msg; t.style.background = bad ? 'var(--err)' : ''; t.style.display = 'block';
   clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', bad ? 6000 : 2500);
 }
-async function api(method, path, body) {
+async function api(method, path, body, retried) {
   const o = {method, headers: {}, credentials: 'same-origin'};
   if (method !== 'GET') { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body ?? {}); }
   const r = await fetch(path.replace(/^\//, ''), o); // relative: works when served under a sub-path
   if (r.status === 401 && me) { showAuth('login'); throw new Error('Session expired, please sign in'); }
-  if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+  if (!r.ok) {
+    const msg = (await r.text()).trim() || r.statusText;
+    // sensitive action: ask for a fresh 2FA code, then repeat the request once
+    if (r.status === 403 && msg.startsWith('otp_required') && !retried) {
+      if (await askOTP()) return api(method, path, body, true);
+      throw new Error('Cancelled – the change was not made');
+    }
+    if (r.status === 403 && msg.startsWith('mfa_setup_required')) { boot(); throw new Error('Set up two-factor authentication first'); }
+    throw new Error(msg.replace(/^(otp_required|mfa_setup_required): /, ''));
+  }
   return r.json();
 }
 async function act(method, path, msg, body) {
@@ -591,6 +653,8 @@ async function boot() {
         return showAuth('invite');
       } catch (e) { toast(e.message, true); }
     }
+    if (s.mfaPending) return showAuth('otp');
+    if (s.user && s.mfaSetupRequired) return startMfaSetup(s.user, true);
     if (s.user) return startApp(s.user);
     showAuth(s.setupRequired ? 'setup' : 'login');
   } catch (e) { toast(e.message, true); }
@@ -599,7 +663,8 @@ function showAuth(mode = 'login') {
   clearTimeout(timer); me = null;
   document.querySelectorAll('dialog').forEach(d => d.open && d.close());
   $('#app').hidden = true; $('#auth').hidden = false;
-  const forms = {setup: '#setupForm', login: '#loginForm', forgot: '#forgotForm', reset: '#resetForm', invite: '#inviteForm'};
+  const forms = {setup: '#setupForm', login: '#loginForm', forgot: '#forgotForm', reset: '#resetForm', invite: '#inviteForm',
+    otp: '#otpForm', mfa: '#mfaForm'};
   for (const [k, sel] of Object.entries(forms)) $(sel).hidden = k !== mode;
   $('#forgotLink').hidden = !resetEnabled;
   const f = $(forms[mode]);
@@ -625,17 +690,90 @@ function authSubmit(sel, fn) {
   };
 }
 authSubmit('#loginForm', async f => {
-  const u = await api('POST', '/api/login', {username: f.username.value, password: f.password.value});
-  f.password.value = ''; startApp(u);
+  const r = await api('POST', '/api/login', {username: f.username.value, password: f.password.value});
+  f.password.value = '';
+  if (r.mfa) { showAuth('otp'); return; }
+  boot();
+});
+authSubmit('#otpForm', async f => {
+  const r = await api('POST', '/api/login/otp', {code: f.code.value});
+  f.reset();
+  if (r.usedRecovery) toast(`Signed in with a recovery code. ${r.user.recoveryLeft} left – make new ones under My account.`, r.user.recoveryLeft < 3);
+  boot();
 });
 authSubmit('#setupForm', async f => {
-  const u = await api('POST', '/api/setup', {code: f.code.value, username: f.username.value, email: f.email.value, password: f.password.value});
-  f.reset(); startApp(u);
+  await api('POST', '/api/setup', {code: f.code.value, username: f.username.value, email: f.email.value, password: f.password.value});
+  f.reset(); boot();
 });
 authSubmit('#inviteForm', async f => {
   const u = await api('POST', '/api/invite/accept', {token: linkToken, username: f.username.value, password: f.password.value});
-  f.reset(); linkToken = ''; toast('Welcome, ' + u.username + '!'); startApp(u);
+  f.reset(); linkToken = ''; toast('Welcome, ' + u.username + '!'); boot();
 });
+
+// ---------- two-factor authentication ----------
+let mfaRequired = false;
+async function startMfaSetup(user, required) {
+  mfaRequired = required;
+  showAuth('mfa');
+  $('#mfaWhy').innerHTML = required
+    ? (user.role === 'admin'
+      ? 'Admins need a second step when signing in, because they control routers, DNS and other users. Set it up once to continue.'
+      : 'Your organisation requires a second step when signing in. Set it up once to continue.')
+    : 'After a password, sign-in will also ask for a code from your phone.';
+  $('#mfaCancel').textContent = required ? 'Sign out' : 'Cancel';
+  $('#mfaQr').innerHTML = ''; $('#mfaKey').textContent = '…';
+  try {
+    const r = await api('POST', '/api/me/2fa/setup');
+    $('#mfaQr').innerHTML = r.qr;   // SVG generated by the server
+    $('#mfaKey').textContent = r.secret.match(/.{1,4}/g).join(' ');
+  } catch (e) { $('#mfaForm .err-box').textContent = e.message; }
+  $('#mfaCode').focus();
+}
+$('#mfaCancel').onclick = () => mfaRequired ? logout() : boot();
+$('#mfaKeyCopy').onclick = e => { e.preventDefault(); copyText($('#mfaKey').textContent.replace(/ /g, ''), 'Key copied'); };
+authSubmit('#mfaForm', async f => {
+  const r = await api('POST', '/api/me/2fa/enable', {code: f.code.value});
+  f.reset();
+  showRecovery(r.recovery, () => { toast('Two-factor authentication is on'); boot(); });
+});
+function copyText(text, msg) {
+  navigator.clipboard?.writeText(text).then(() => toast(msg), () => toast('Select the text and copy it', true));
+}
+function showRecovery(codes, done) {
+  $('#recList').innerHTML = codes.map(c => `<span>${esc(c)}</span>`).join('');
+  $('#recSaved').checked = false; $('#recDone').disabled = true;
+  const text = 'RouterOS ACME recovery codes (each works once)\n\n' + codes.join('\n') + '\n';
+  $('#recCopy').onclick = () => copyText(text, 'Recovery codes copied');
+  $('#recDl').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
+    a.download = 'routeros-acme-recovery-codes.txt'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  $('#recForm').onsubmit = e => { e.preventDefault(); recDlg.close(); done && done(); };
+  recDlg.showModal();
+}
+$('#recSaved').onchange = e => { $('#recDone').disabled = !e.target.checked; };
+recDlg.addEventListener('cancel', e => e.preventDefault()); // codes must be acknowledged
+
+// Code prompt. submit(code) must throw on a wrong code; resolves true when it succeeded.
+function askCode({title = "Confirm it's you", hint = 'This change needs a fresh code from your authenticator app.', submit}) {
+  return new Promise(resolve => {
+    const f = $('#otpDlgForm'), eb = f.querySelector('.err-box');
+    $('#otpDlgTitle').textContent = title; $('#otpDlgHint').textContent = hint;
+    f.reset(); eb.textContent = '';
+    const finish = ok => { otpDlg.close(); resolve(ok); };
+    f.onsubmit = async e => {
+      e.preventDefault(); eb.textContent = '';
+      try { await submit(f.code.value); finish(true); }
+      catch (err) { eb.textContent = err.message; f.code.select(); }
+    };
+    $('#otpDlgCancel').onclick = () => finish(false);
+    otpDlg.oncancel = e => { e.preventDefault(); finish(false); };
+    otpDlg.showModal(); $('#otpDlgCode').focus();
+  });
+}
+const askOTP = () => askCode({submit: code => api('POST', '/api/me/2fa/verify', {code}, true)});
+
 authSubmit('#forgotForm', async f => {
   const msg = await api('POST', '/api/forgot', {login: f.login.value});
   f.reset(); showAuth('login'); toast(msg);
@@ -651,8 +789,34 @@ async function logout() {
   showAuth('login');
 }
 function openAccount() {
-  const f = $('#acctForm'); f.email.value = me.email || ''; f.notify.checked = !!me.notify; acctDlg.showModal();
+  const f = $('#acctForm'); f.email.value = me.email || ''; f.notify.checked = !!me.notify;
+  renderMfaBox(); acctDlg.showModal();
 }
+function renderMfaBox() {
+  const required = me.role === 'admin' || S.settings.require2faAll, box = $('#mfaBox');
+  if (!me.totp) {
+    box.innerHTML = `<div class="row"><b>Two-factor authentication</b><span class="badge off">Off</span></div>
+      <div class="hint" style="margin:0">Adds a code from your phone to your sign-in.</div>
+      <div><button type="button" id="mfaOn">Set up two-factor authentication</button></div>`;
+    $('#mfaOn').onclick = () => { acctDlg.close(); startMfaSetup(me, false); };
+    return;
+  }
+  box.innerHTML = `<div class="row"><b>Two-factor authentication</b><span class="badge on">On</span></div>
+    <div class="hint" style="margin:0">${me.recoveryLeft} of 10 recovery codes left.${required ? ' Required for your account.' : ''}</div>
+    <div class="acts"><button type="button" id="mfaNewRec">New recovery codes</button>${required ? '' : '<button type="button" class="del" id="mfaOff">Turn off</button>'}</div>`;
+  $('#mfaNewRec').onclick = async () => {
+    try { const r = await api('POST', '/api/me/2fa/recovery'); acctDlg.close(); showRecovery(r.recovery, refresh); }
+    catch (e) { toast(e.message, true); }
+  };
+  if (!required) $('#mfaOff').onclick = async () => {
+    acctDlg.close();
+    if (await askCode({title: 'Turn off two-factor authentication', hint: 'Enter a code from your authenticator app to confirm.',
+        submit: code => api('POST', '/api/me/2fa/disable', {code}, true)})) {
+      toast('Two-factor authentication is off'); refresh();
+    }
+  };
+}
+
 $('#acctForm').onsubmit = async e => {
   e.preventDefault(); const f = e.target;
   if (await act('PUT', '/api/me', 'Saved', {email: f.email.value, notify: f.notify.checked})) {
@@ -753,7 +917,7 @@ function renderUsers() {
   $('#userRows').innerHTML = users.map(u => `<tr>
     <td class="main"><span style="display:inline-flex;align-items:center;gap:10px"><span class="av">${esc(u.username[0])}</span>${esc(u.username)}${u.id === me.id ? ' <span class="muted small">(you)</span>' : ''}</span></td>
     ${cell('E-mail', (esc(u.email) || '—') + (u.notify ? ` <span class="badge" title="receives notifications">${icon('mail').replace('class="i"', 'class="i" style="width:13px;height:13px"')}</span>` : ''), 'small')}
-    ${cell('Role', `<span class="badge ${u.role}">${u.role}</span>`)}
+    ${cell('Role', `<span class="badge ${u.role}">${u.role}</span> ${u.totp ? '<span class="badge on" title="Two-factor authentication on">2FA</span>' : '<span class="badge off" title="Two-factor authentication off">no 2FA</span>'}`)}
     ${cell('Created', date(u.created), 'small nw')}
     ${cell('Last login', rel(u.lastLogin), 'small nw')}
     <td class="acts-cell"><div class="acts"><button onclick="editUser('${u.id}')">Edit</button>
@@ -795,7 +959,7 @@ function fillSettings() {
   const f = $('#setForm'), s = S.settings;
   f.email.value = s.email || ''; f.cfToken.value = ''; f.keyType.value = s.keyType;
   f.renewDays.value = s.renewDays; f.checkHours.value = s.checkHours;
-  f.dnsResolvers.value = s.dnsResolvers || ''; f.staging.checked = !!s.staging;
+  f.dnsResolvers.value = s.dnsResolvers || ''; f.staging.checked = !!s.staging; f.require2fa.checked = !!s.require2faAll;
   f.cfToken.placeholder = s.hasCfToken ? '•••••••• (saved, leave empty to keep)' : 'not set';
   const m = S.mail, g = $('#mailForm');
   for (const k of ['host', 'port', 'security', 'user', 'from', 'publicUrl', 'warnDays', 'extraRecipients']) g[k].value = m[k] ?? '';
@@ -822,7 +986,7 @@ $('#setForm').onsubmit = async e => {
   if (await act('PUT', '/api/settings', 'Settings saved', {
     email: f.email.value, cfToken: f.cfToken.value, keyType: f.keyType.value,
     renewDays: +f.renewDays.value, checkHours: +f.checkHours.value,
-    dnsResolvers: f.dnsResolvers.value, staging: f.staging.checked })) fillSettings();
+    dnsResolvers: f.dnsResolvers.value, staging: f.staging.checked, require2faAll: f.require2fa.checked })) fillSettings();
 };
 
 // ---------- certificates ----------
@@ -990,6 +1154,16 @@ function editUser(id) {
   $('#userTitle').textContent = id ? 'Edit user' : 'Add user';
   f.id.value = u.id || ''; f.username.value = u.username || ''; f.role.value = u.role; f.password.value = '';
   f.email.value = u.email || ''; f.notify.checked = !!u.notify;
+  const mb = $('#userMfa');
+  mb.hidden = !id || id === me.id;
+  if (!mb.hidden) {
+    mb.innerHTML = u.totp
+      ? `<b>Two-factor authentication: on</b><div class="hint">If ${esc(u.username)} lost their phone and recovery codes, reset it. They set it up again at the next sign-in.</div><div><button type="button" class="del" id="userReset2fa">Reset 2FA</button></div>`
+      : `<b>Two-factor authentication: off</b><div class="hint">${u.role === 'admin' || S.settings.require2faAll ? 'They must set it up at their next sign-in.' : 'Optional for this user.'}</div>`;
+    if (u.totp) $('#userReset2fa').onclick = async () => {
+      if (await act('POST', `/api/users/${u.id}/reset-2fa`, `2FA reset for ${u.username}`)) userDlg.close();
+    };
+  }
   f.password.required = !id;
   $('#userPwHint').textContent = id ? 'Leave empty to keep the current password. Setting one signs the user out everywhere.' : 'At least 8 characters.';
   userDlg.showModal();

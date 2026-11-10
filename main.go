@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata" // TZ support in a scratch image
@@ -39,6 +40,8 @@ type app struct {
 	proxy        proxyTrust // TRUSTED_PROXIES
 	basePath     string     // BASE_PATH, e.g. "/certs" ("" = served at /)
 	cookieSecure bool       // COOKIE_SECURE=true forces the Secure cookie flag
+
+	otpFresh time.Duration // how long an entered 2FA code counts for sensitive actions (OTP_FRESH_MINUTES)
 }
 
 func env(k, def string) string {
@@ -51,6 +54,7 @@ func env(k, def string) string {
 func main() {
 	health := flag.Bool("healthcheck", false, "probe the local web server and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	reset2FA := flag.String("reset-2fa", "", "turn off two-factor authentication for `USER` and exit (stop the server first)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("routeros-acme", version)
@@ -67,6 +71,16 @@ func main() {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		log.Fatal(err)
 	}
+	lockErr := lockDataDir(dataDir)
+	if *reset2FA != "" {
+		if lockErr != nil {
+			log.Fatalf("cannot reset 2FA: %v. Stop it first, for example: docker compose stop", lockErr)
+		}
+		os.Exit(resetUser2FA(dataDir, *reset2FA))
+	}
+	if lockErr != nil {
+		log.Fatalf("data directory %s: %v", dataDir, lockErr)
+	}
 	store, err := OpenStore(dataDir)
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -79,6 +93,11 @@ func main() {
 		sessions: &sessionStore{m: map[string]session{}}}
 	a.throttle, a.mailThrottle = newThrottle(), newThrottle()
 	a.mgr.sealer = sl
+	if n, err := store.SealSecrets(sl); err != nil {
+		log.Fatalf("encrypting stored secrets: %v", err)
+	} else if n > 0 {
+		log.Printf("encrypted %d secret(s) that were stored in plain text", n)
+	}
 	if a.proxy, err = parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")); err != nil {
 		log.Fatal(err)
 	}
@@ -86,6 +105,14 @@ func main() {
 		log.Fatal(err)
 	}
 	a.cookieSecure = strings.EqualFold(os.Getenv("COOKIE_SECURE"), "true")
+	a.otpFresh = 5 * time.Minute
+	if v := os.Getenv("OTP_FRESH_MINUTES"); v != "" {
+		m, err := strconv.Atoi(v)
+		if err != nil || m < 0 || m > 60 {
+			log.Fatal("OTP_FRESH_MINUTES must be 0-60")
+		}
+		a.otpFresh = time.Duration(m) * time.Minute
+	}
 	if a.proxy.enabled() {
 		log.Printf("trusting X-Forwarded-For/-Proto from: %s", a.proxy)
 	}
@@ -101,6 +128,34 @@ func main() {
 	}
 	log.Printf("web UI listening on %s%s/", listen, a.basePath)
 	log.Fatal(srv.ListenAndServe())
+}
+
+// resetUser2FA is the last resort when a user (e.g. the only admin) has lost both the
+// authenticator and the recovery codes. The user sets 2FA up again at the next sign-in.
+func resetUser2FA(dataDir, username string) int {
+	st, err := OpenStore(dataDir)
+	if err != nil {
+		log.Printf("config: %v", err)
+		return 1
+	}
+	err = st.Update(func(c *Config) error {
+		u := c.userByName(username)
+		if u == nil {
+			var names []string
+			for _, x := range c.Users {
+				names = append(names, x.Username)
+			}
+			return fmt.Errorf("no user %q (users: %s)", username, strings.Join(names, ", "))
+		}
+		u.TOTPSecret, u.TOTPPending, u.TOTPLastStep, u.Recovery = "", "", 0, nil
+		return nil
+	})
+	if err != nil {
+		log.Print(err)
+		return 1
+	}
+	log.Printf("two-factor authentication for %q is off; it must be set up again at the next sign-in", username)
+	return 0
 }
 
 func healthcheck(listen string) int {
@@ -130,6 +185,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/session", a.getSession)
 	mux.HandleFunc("POST /api/setup", a.postSetup)
 	mux.HandleFunc("POST /api/login", a.postLogin)
+	mux.HandleFunc("POST /api/login/otp", a.postLoginOTP)
 	mux.HandleFunc("POST /api/invite/check", a.checkInvite)
 	mux.HandleFunc("POST /api/invite/accept", a.acceptInvite)
 	mux.HandleFunc("POST /api/forgot", a.forgotPassword)
@@ -138,6 +194,12 @@ func (a *app) routes() http.Handler {
 	// any logged-in user (viewer or admin)
 	mux.HandleFunc("POST /api/logout", a.postLogout)
 	mux.HandleFunc("PUT /api/me/password", a.need("", a.putMyPassword))
+	// two-factor authentication: setup is reachable before 2FA is on
+	mux.HandleFunc("POST /api/me/2fa/setup", a.needAny(a.setup2FA))
+	mux.HandleFunc("POST /api/me/2fa/enable", a.needAny(a.enable2FA))
+	mux.HandleFunc("POST /api/me/2fa/verify", a.need("", a.verify2FA))
+	mux.HandleFunc("POST /api/me/2fa/recovery", a.need("", a.stepUp(a.newRecovery)))
+	mux.HandleFunc("POST /api/me/2fa/disable", a.need("", a.disable2FA))
 	mux.HandleFunc("PUT /api/me", a.need("", a.putMe))
 	mux.HandleFunc("GET /api/state", a.need("", a.getState))
 	mux.HandleFunc("GET /api/logs", a.need("", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, a.mgr.Logs()) }))
@@ -185,10 +247,11 @@ func (a *app) routes() http.Handler {
 		writeJSON(w, "queued")
 	})
 	adm("POST /api/devices/probe", a.probeDevice)
-	adm("POST /api/devices/enroll", a.enrollDevice)
+	adm("POST /api/devices/enroll", a.stepUp(a.enrollDevice))
 	adm("GET /api/users", a.listUsers)
 	adm("POST /api/users", a.saveUser)
-	adm("DELETE /api/users/{id}", a.deleteUser)
+	adm("DELETE /api/users/{id}", a.stepUp(a.deleteUser))
+	adm("POST /api/users/{id}/reset-2fa", a.stepUp(a.reset2FA))
 	adm("GET /api/invites", a.listInvites)
 	adm("POST /api/invites", a.createInvite)
 	adm("DELETE /api/invites/{id}", a.deleteInvite)
@@ -268,6 +331,11 @@ func (a *app) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Email = strings.TrimSpace(in.Email)
+	var wasRequired bool
+	a.store.Read(func(c *Config) { wasRequired = c.Settings.Require2FA })
+	if (strings.TrimSpace(in.CFToken) != "" || (wasRequired && !in.Require2FA)) && !a.requireFresh(w, r) {
+		return // a new DNS token or weaker 2FA policy needs a fresh code
+	}
 	switch {
 	case in.Email != "" && !strings.Contains(in.Email, "@"):
 		fail(w, 400, errors.New("invalid e-mail"))
@@ -284,10 +352,10 @@ func (a *app) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	err := a.store.Update(func(c *Config) error {
 		s := &c.Settings
-		s.Email, s.Staging, s.KeyType = in.Email, in.Staging, in.KeyType
+		s.Email, s.Staging, s.KeyType, s.Require2FA = in.Email, in.Staging, in.KeyType, in.Require2FA
 		s.RenewDays, s.CheckHours, s.DNSResolvers = in.RenewDays, in.CheckHours, strings.TrimSpace(in.DNSResolvers)
 		if t := strings.TrimSpace(in.CFToken); t != "" {
-			s.CFToken = t
+			s.CFToken = a.mgr.sealer.seal(t) // stored encrypted, like router secrets
 		}
 		for _, x := range c.Certs {
 			x.LastError = "" // settings may have fixed the problem: allow an immediate retry
@@ -426,6 +494,10 @@ func (a *app) deleteRouter(w http.ResponseWriter, r *http.Request) {
 	dev := a.store.Snapshot().router(id)
 	if dev == nil {
 		fail(w, 404, errors.New("not found"))
+		return
+	}
+	if in.Cleanup != nil && !a.requireFresh(w, r) {
+		in.Cleanup.wipe()
 		return
 	}
 	msg := "removed from RouterOS ACME"

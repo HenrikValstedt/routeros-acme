@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/x509"
 	"fmt"
 	"log"
 	"strings"
@@ -155,7 +156,17 @@ func (m *Manager) issue(id string) {
 	if c == nil {
 		return
 	}
-	leaf, err := obtain(m.dataDir, cfg.Settings, *c, m.logf)
+	st := cfg.Settings
+	var err error
+	if m.sealer != nil {
+		if st.CFToken, err = m.sealer.reveal(st.CFToken); err != nil { // decrypted only for this request
+			err = fmt.Errorf("cloudflare token: %w – enter it again in Settings", err)
+		}
+	}
+	var leaf *x509.Certificate
+	if err == nil {
+		leaf, err = obtain(m.dataDir, st, *c, m.logf)
+	}
 	_ = m.store.Update(func(cf *Config) error {
 		x := cf.cert(id)
 		if x == nil {

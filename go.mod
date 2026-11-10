@@ -6,6 +6,7 @@ require (
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/pkg/sftp v1.13.12
 	golang.org/x/crypto v0.58.0
+	rsc.io/qr v0.2.0
 )
 
 require (

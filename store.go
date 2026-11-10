@@ -22,6 +22,7 @@ type Settings struct {
 	CheckHours   int    `json:"checkHours"`          // scheduler interval
 	DNSResolvers string `json:"dnsResolvers"`        // optional, comma separated, used for propagation checks
 	AdminHash    string `json:"adminHash,omitempty"` // legacy (pre user accounts), migrated on start
+	Require2FA   bool   `json:"require2faAll"`       // 2FA for every user (admins always need it)
 }
 
 // MailSettings configures SMTP, notifications and the public URL used in e-mailed links.
@@ -116,14 +117,20 @@ func (r *Router) enrolled() bool { return r.ServiceUser != "" && r.Secret != "" 
 
 // User is a web UI account.
 type User struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Role      string    `json:"role"` // admin | viewer
-	Hash      string    `json:"hash"` // bcrypt
-	Email     string    `json:"email,omitempty"`
-	Notify    bool      `json:"notify"` // receive notification e-mails
-	Created   time.Time `json:"created"`
-	LastLogin time.Time `json:"lastLogin,omitzero"`
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Role     string `json:"role"` // admin | viewer
+	Hash     string `json:"hash"` // bcrypt
+	Email    string `json:"email,omitempty"`
+	Notify   bool   `json:"notify"` // receive notification e-mails
+
+	// two-factor authentication (TOTP)
+	TOTPSecret   string    `json:"totpSecret,omitempty"`   // sealed; set = 2FA on
+	TOTPPending  string    `json:"totpPending,omitempty"`  // sealed; during setup, until confirmed
+	TOTPLastStep int64     `json:"totpLastStep,omitempty"` // last accepted time step (no code reuse)
+	Recovery     []string  `json:"recovery,omitempty"`     // SHA-256 of unused recovery codes
+	Created      time.Time `json:"created"`
+	LastLogin    time.Time `json:"lastLogin,omitzero"`
 }
 
 type Config struct {
@@ -163,6 +170,11 @@ func (c Config) userByName(name string) *User {
 	}
 	return nil
 }
+
+func (u *User) has2FA() bool { return u.TOTPSecret != "" }
+
+// needs2FA: admins always, everyone when the setting requires it.
+func (u *User) needs2FA(c Config) bool { return u.Role == RoleAdmin || c.Settings.Require2FA }
 
 func (c Config) adminCount() int {
 	n := 0
@@ -254,6 +266,22 @@ func (s *Store) Snapshot() Config {
 	var c Config
 	_ = json.Unmarshal(b, &c)
 	return c
+}
+
+// SealSecrets encrypts the Cloudflare token and SMTP password if they are still stored
+// in plain text (configs written by versions before 1.1). It returns how many it converted.
+func (s *Store) SealSecrets(sl *sealer) (int, error) {
+	n := 0
+	err := s.Update(func(c *Config) error {
+		for _, p := range []*string{&c.Settings.CFToken, &c.Mail.Password} {
+			if *p != "" && !isSealed(*p) {
+				*p = sl.seal(*p)
+				n++
+			}
+		}
+		return nil
+	})
+	return n, err
 }
 
 // Read gives fn read-only access to the live config (no copy). fn must not keep references.

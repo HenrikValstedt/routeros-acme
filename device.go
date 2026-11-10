@@ -383,7 +383,7 @@ func connectDevice(r Router, sl *sealer) (c *apiClient, pw string, usedPending b
 	}
 	for i, sealed := range candidates {
 		if pw, err = sl.open(sealed); err != nil {
-			return nil, "", false, err
+			return nil, "", false, fmt.Errorf("%w – enroll the device again", err)
 		}
 		if c, err = dialAPIRetry(r.Host, r.APIPort, r.Pins); err != nil {
 			return nil, "", false, err
