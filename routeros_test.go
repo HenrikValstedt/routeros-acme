@@ -212,6 +212,19 @@ func TestRealRouterOS(t *testing.T) {
 	}
 	t.Logf("pins: %d before, 1 after (old ones refused)", len(oldPins)+1)
 
+	// 5c. the race from the review: a deploy has just added a newer pin, api-ssl hasn't
+	// switched yet, and a Test runs. The newer pin must survive.
+	newer := strings.Repeat("f", 64)
+	_ = mst.Update(func(cf *Config) error { cf.router("r1").Pins = []string{lastFP, newer}; return nil })
+	ms, _, err = m.session(mst.Snapshot().router("r1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms.Close()
+	if got := mst.Snapshot().router("r1").Pins; strings.Join(got, ",") != lastFP+","+newer {
+		t.Fatalf("a pin added by a running deploy was dropped: %v", got)
+	}
+
 	certs, _ := c.run("/certificate/print", "=.proplist=name,fingerprint")
 	var mine []string
 	for _, x := range certs {

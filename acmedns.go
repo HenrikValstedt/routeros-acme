@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -40,6 +41,10 @@ func (r *acmeDNSReg) record() string { return "_acme-challenge." + r.Name }
 var acmeDNSClient = &http.Client{Timeout: 20 * time.Second}
 
 func acmeDNSPost(apiBase, path string, hdr map[string]string, body any) ([]byte, error) {
+	// checked at every use, not only when saving: a name may resolve differently later
+	if u, err := url.Parse(apiBase); err != nil || (u.Scheme == "http" && !localOnly(u.Hostname())) {
+		return nil, errors.New("acme-dns: refusing http:// to an address that isn't local or private – use https://")
+	}
 	b, _ := json.Marshal(body)
 	req, err := http.NewRequest("POST", strings.TrimRight(apiBase, "/")+path, bytes.NewReader(b))
 	if err != nil {

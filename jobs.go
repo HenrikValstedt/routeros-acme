@@ -252,19 +252,32 @@ func (m *Manager) session(r *Router) (*apiClient, string, error) {
 		})
 		m.logf("[%s] completed an interrupted password rotation", r.Name)
 	}
-	// Several pins exist only while api-ssl switches certificates. Once the router has
-	// logged in with one of them, the others (the enrollment one, the previous one) are
-	// no longer accepted.
-	if len(r.Pins) > 1 && c.peerFP != "" && slices.Contains(r.Pins, c.peerFP) {
+	// Pins older than the certificate the router presents are no longer accepted.
+	if slices.Index(r.Pins, c.peerFP) > 0 {
+		pruned := false
 		_ = m.store.Update(func(cf *Config) error {
-			if x := cf.router(r.ID); x != nil && slices.Contains(x.Pins, c.peerFP) {
-				x.Pins = []string{c.peerFP}
+			if x := cf.router(r.ID); x != nil {
+				if p := prunePins(x.Pins, c.peerFP); len(p) < len(x.Pins) {
+					x.Pins, pruned = p, true
+				}
 			}
 			return nil
 		})
-		m.logf("[%s] api-ssl certificate pin updated: only the current certificate is accepted now", r.Name)
+		if pruned {
+			m.logf("[%s] api-ssl certificate pin updated: older certificates are no longer accepted", r.Name)
+		}
 	}
 	return c, pw, nil
+}
+
+// prunePins drops the pins older than the one the router presented. New fingerprints
+// are always appended, so a pin a running deploy has just added (api-ssl not switched
+// yet) is kept: a Test during a deploy must not cut the pin the router is about to use.
+func prunePins(pins []string, presented string) []string {
+	if i := slices.Index(pins, presented); i > 0 {
+		return slices.Clone(pins[i:])
+	}
+	return pins
 }
 
 // deploy pushes the device's certificate to it now (must run inside a job).

@@ -281,13 +281,19 @@ func (s *Store) save() error {
 	if err != nil {
 		return err
 	}
-	// write, flush to disk, then replace: a power cut leaves either the old or the new file
-	tmp := s.path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	return writeFileSync(s.path, b, 0o600)
+}
+
+// writeFileSync writes a file so that a power cut leaves either the old or the new
+// content: write to a temporary file, flush it to disk, rename it into place, and
+// flush the directory so the rename itself is durable.
+func writeFileSync(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(b); err != nil {
+	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
 	}
@@ -298,10 +304,10 @@ func (s *Store) save() error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, s.path); err != nil {
+	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
-	if d, err := os.Open(filepath.Dir(s.path)); err == nil { // make the rename itself durable
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
 		_ = d.Sync()
 		d.Close()
 	}

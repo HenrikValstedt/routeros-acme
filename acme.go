@@ -81,7 +81,7 @@ func saveAccount(path string, u *acmeUser) error {
 		return err
 	}
 	b, _ := json.MarshalIndent(u, "", "  ")
-	return os.WriteFile(path, b, 0o600)
+	return writeFileSync(path, b, 0o600)
 }
 
 // obtain requests a new certificate via DNS-01 on Cloudflare and stores it
@@ -151,10 +151,11 @@ func obtain(dataDir string, st Settings, c Cert, prov challenge.Provider, logf f
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "privkey.pem"), res.PrivateKey, 0o600); err != nil {
+	// the key first, then the chain: the chain's fingerprint is what deploys compare
+	if err := writeFileSync(filepath.Join(dir, "privkey.pem"), res.PrivateKey, 0o600); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "fullchain.pem"), res.Certificate, 0o600); err != nil {
+	if err := writeFileSync(filepath.Join(dir, "fullchain.pem"), res.Certificate, 0o600); err != nil {
 		return nil, err
 	}
 	return leaf, nil

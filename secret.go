@@ -152,7 +152,7 @@ func openSealer(st *Store, dataDir string, kc keyConfig, forget bool) (*sealer, 
 		if _, err := rand.Read(active); err != nil {
 			return nil, rep, err
 		}
-		if err := os.WriteFile(path, active, 0o600); err != nil {
+		if err := writeFileSync(path, active, 0o600); err != nil {
 			return nil, rep, err
 		}
 		dataKey = active

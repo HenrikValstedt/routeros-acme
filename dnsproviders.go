@@ -223,12 +223,15 @@ func localOnly(host string) bool {
 		}
 	}
 	for _, ip := range ips {
-		if !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() {
+		if !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() && !cgnat.Contains(ip) {
 			return false
 		}
 	}
 	return true
 }
+
+// cgnat is 100.64.0.0/10 (shared address space, e.g. Tailscale): not routed on the internet.
+var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
 // ---- Test: prove that the credentials can create a record that DNS then serves ----
 

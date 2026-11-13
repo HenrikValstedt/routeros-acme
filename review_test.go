@@ -71,11 +71,19 @@ func TestACMEDNSHTTPOnlyLocal(t *testing.T) {
 	for url, ok := range map[string]bool{
 		"https://auth.acme-dns.io": true, "http://127.0.0.1:8053": true, "http://192.168.1.5": true,
 		"http://localhost": true, "http://[fd00::5]": true, "http://203.0.113.9": false, "http://8.8.8.8": false,
+		"http://100.101.102.103": true, // Tailscale (100.64.0.0/10)
 	} {
 		err := validateConfig("acmedns", map[string]string{"apiBase": url}, nil, nil)
 		if ok != (err == nil) {
 			t.Errorf("%s: %v", url, err)
 		}
+	}
+}
+
+// The http:// rule is checked again at every use, not only when the account is saved.
+func TestACMEDNSHTTPCheckedAtUse(t *testing.T) {
+	if _, err := acmeDNSPost("http://203.0.113.9", "/register", nil, map[string]any{}); err == nil || !strings.Contains(err.Error(), "refusing http://") {
+		t.Fatal(err)
 	}
 }
 
@@ -95,5 +103,25 @@ func TestStoreSaveAtomic(t *testing.T) {
 	st2, _ := OpenStore(dir)
 	if st2.Snapshot().Settings.Email != "a@example.com" {
 		t.Fatal("not saved")
+	}
+}
+
+// Pins are only dropped when they are older than the presented one: a pin a running
+// deploy has just added must survive a Test that still sees the old certificate.
+func TestPrunePins(t *testing.T) {
+	for _, c := range []struct {
+		pins      []string
+		presented string
+		want      string
+	}{
+		{[]string{"enroll", "old", "new"}, "new", "new"},
+		{[]string{"old", "new"}, "old", "old,new"},           // deploy added "new", api-ssl not switched yet
+		{[]string{"enroll", "old", "new"}, "old", "old,new"}, // the enrollment pin goes, the new one stays
+		{[]string{"only"}, "only", "only"},
+		{[]string{"a", "b"}, "unknown", "a,b"}, // can't happen (the pin check refuses), but never drop on a mismatch
+	} {
+		if got := strings.Join(prunePins(c.pins, c.presented), ","); got != c.want {
+			t.Errorf("%v presenting %s: got %s, want %s", c.pins, c.presented, got, c.want)
+		}
 	}
 }
