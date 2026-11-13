@@ -212,6 +212,16 @@
   <div class="foot"><button type="button" class="del u-mr-auto" id="dnsDel">Delete</button><button type="button" data-act="closeDialog">Cancel</button><button class="pri" value="save">Save</button></div>
 </form></dialog>
 
+<dialog id="cnameDlg" class="sm"><form method="dialog">
+  <h3>CNAME records to create</h3>
+  <div class="hint u-mt0" id="cnameIntro"></div>
+  <div id="cnameList"></div>
+  <div class="info small"><b>At Cloudflare:</b> set <b>Proxy status</b> to <b>DNS only</b> (grey cloud), TTL Auto.
+    Many DNS hosts add the domain themselves: then enter the <b>Name</b> without your domain at the end, e.g.
+    <code>_acme-challenge.router</code> for <code>_acme-challenge.router.example.com</code> in the zone <code>example.com</code>.</div>
+  <div class="foot"><button type="button" data-act="checkCNAMEs" id="cnameCheck">Check again</button><button class="pri" value="close">Close</button></div>
+</form></dialog>
+
 <dialog id="dnsTestDlg" class="sm"><form method="dialog">
   <h3 id="dnsTestTitle">Test</h3>
   <p id="dnsTestMsg"></p>

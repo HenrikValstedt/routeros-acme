@@ -149,13 +149,16 @@ algorithm and the secret, plus the zones (`example.com`).
 **acme-dns (CNAME).** For DNS hosts without an API, or when you don't want any DNS credentials in the app:
 
 1. Add an acme-dns account with the server and the zones it is for (e.g. `example.com`).
-2. Add a certificate. The app registers each name with acme-dns and shows one CNAME record per name, in the DNS
-   accounts list and under the certificate, for example
-   `_acme-challenge.router.example.com → 1a2b3c….auth.acme-dns.io`.
-3. Create those CNAME records once at your DNS host, then click **Check CNAMEs** (or **Test**).
+2. Add a certificate. The app registers each name with acme-dns. The certificate shows **Waiting for CNAME** and
+   **CNAME record needed → Show**, which lists each record with its **Name** and **Target** (e.g.
+   `_acme-challenge.router.example.com` → `1a2b3c….auth.acme-dns.io`) and a **Copy** button for each. The same list
+   is under **CNAMEs** on the acme-dns account.
+3. Create those CNAME records once at your DNS host. At Cloudflare, set **Proxy status** to **DNS only** (grey cloud).
+   Then click **Check again**: as soon as all records are found, the certificate is requested right away.
 
 Until a name's CNAME exists, the app doesn't ask Let's Encrypt for that certificate, so no failed validations count
-against the rate limits. A wildcard and its base name (`*.example.com` and `example.com`) share one CNAME. After that,
+against the rate limits. Opening the acme-dns server's address in a browser shows *404 Not Found*: that's normal, it
+only answers the app. A wildcard and its base name (`*.example.com` and `example.com`) share one CNAME. After that,
 renewals only talk to the acme-dns server.
 
 ## E-mail: notifications, invitations, password reset

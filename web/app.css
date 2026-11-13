@@ -252,6 +252,9 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 
 .cname{margin-top:4px;overflow-wrap:anywhere}.cname.ok{color:var(--ok)}.cname.warn{color:var(--warn)}
+.cnrec{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0}.cnrec .row{gap:8px;align-items:center}
+.cnrec label{margin-top:8px}.copyrow{display:flex;gap:8px;align-items:flex-start}.copyval{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line2);border-radius:var(--r-sm);background:var(--bg2);font-size:12.5px;overflow-wrap:anywhere;user-select:all}
+.cname-need{display:flex;align-items:center;gap:8px;margin-top:4px}button.sm{padding:2px 10px;min-height:0;height:26px;font-size:12.5px}
 #dnsTestList{padding-left:18px;overflow-wrap:anywhere}
 
 /* Utility classes in place of inline style="" attributes, which the Content Security Policy blocks.

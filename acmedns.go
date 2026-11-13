@@ -184,6 +184,12 @@ func (m *Manager) syncACMEDNS(id string) error {
 		m.logf("DNS account %q: registered %s with acme-dns – create CNAME %s → %s", a.Name, n, r.record(), r.FullDomain)
 	}
 	resolvers := splitList(cfg.Settings.DNSResolvers)
+	nowReady := false
+	defer func() {
+		if nowReady { // a CNAME was just created: retry the waiting certificates right away
+			m.Trigger()
+		}
+	}()
 	return errors.Join(firstErr, m.store.Update(func(c *Config) error {
 		x := c.dnsAccount(id)
 		if x == nil {
@@ -194,7 +200,16 @@ func (m *Manager) syncACMEDNS(id string) error {
 		})
 		x.ACMEDNS = append(x.ACMEDNS, added...)
 		for _, r := range x.ACMEDNS {
-			r.CNAMEOK, r.Checked = cnamePointsTo(r.record(), r.FullDomain, resolvers), time.Now()
+			ok := cnamePointsTo(r.record(), r.FullDomain, resolvers)
+			nowReady = nowReady || (ok && !r.CNAMEOK)
+			r.CNAMEOK, r.Checked = ok, time.Now()
+		}
+		if nowReady {
+			for _, cert := range c.Certs {
+				if strings.HasPrefix(cert.LastError, cnameNeeded) {
+					cert.LastError = "" // no back-off: it waited for the user, not for a failure
+				}
+			}
 		}
 		if firstErr != nil {
 			x.LastError = firstErr.Error()
@@ -215,6 +230,9 @@ func (m *Manager) syncAllACMEDNS() {
 		}
 	}
 }
+
+// cnameNeeded starts the error of a certificate that waits for its CNAME records.
+const cnameNeeded = "create these CNAME records at your DNS host first"
 
 // acmeDNSReady checks, before a certificate is requested, that every name routed to an
 // acme-dns account is registered and has its CNAME. Otherwise Let's Encrypt would only
@@ -245,7 +263,7 @@ func (m *Manager) acmeDNSReady(c Cert) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("create these CNAME records at your DNS host first: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("%s: %s", cnameNeeded, strings.Join(missing, ", "))
 	}
 	return nil
 }

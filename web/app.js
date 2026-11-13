@@ -338,6 +338,8 @@ const rel = t => {
 };
 const daysLeft = c => Math.floor((new Date(c.notAfter) - Date.now()) / 864e5);
 function certStatus(c) {
+  if (c.lastError?.startsWith('create these CNAME records')) return pill('warn', 'Waiting for CNAME')
+    + `<div class="sub">create it at your DNS host</div>`;
   if (c.lastError) return pill('err', 'Error') + `<div class="errtxt" title="${esc(c.lastError)}">${esc(c.lastError)}</div>`;
   if (!hasT(c.notAfter)) return pill('warn', 'Not issued yet');
   const d = daysLeft(c);
@@ -561,10 +563,9 @@ function dnsVia(c) {
   if (r.error) return `<div class="errtxt" title="${esc(r.error)}">${esc(r.error)}</div>`;
   const names = [...new Set((r.routes || []).map(x => (S.dnsAccounts.find(a => a.id === x.accountId) || {}).name).filter(Boolean))];
   // acme-dns: CNAME records still to be created at the DNS host
-  const todo = (r.routes || []).flatMap(x => ((S.dnsAccounts.find(a => a.id === x.accountId) || {}).cnames || [])
-    .filter(cn => !cn.ok && cn.name === x.name.replace(/^\*\./, '').toLowerCase()));
-  const need = [...new Map(todo.map(cn => [cn.record, cn])).values()]
-    .map(cn => `<div class="warn">create CNAME <span class="mono">${esc(cn.record)}</span> → <span class="mono">${esc(cn.target)}</span></div>`).join('');
+  const open = (r.cnames || []).filter(cn => !cn.ok).length;
+  const need = open ? `<div class="warn cname-need">${open === 1 ? 'CNAME record needed' : open + ' CNAME records needed'}
+    <button type="button" class="sm" data-act="showCertCNAMEs" data-id="${c.id}">Show</button></div>` : '';
   return (names.length ? `<div class="muted">via ${names.map(esc).join(', ')}</div>` : '') + need;
 }
 const provDef = id => (S.dnsProviders || []).find(p => p.id === (id || 'cloudflare')) || {fields: []};
@@ -575,10 +576,11 @@ function renderDNS() {
     const cnames = cn.map(c => `<div class="cname ${c.ok ? 'ok' : 'warn'}">${c.ok ? '✓' : '✗'} <span class="mono">${esc(c.record)}</span> → <span class="mono">${esc(c.target)}</span></div>`).join('');
     const status = a.lastError ? pill('err', 'Error') + `<div class="errtxt" title="${esc(a.lastError)}">${esc(a.lastError)}</div>`
       : open ? pill('warn', open === 1 ? 'CNAME needed' : `${open} CNAMEs needed`) + '<div class="sub">create them at your DNS host</div>'
+      : a.provider === 'acmedns' && !cn.length ? pill('muted', 'No certificate yet') + '<div class="sub">add a certificate for a name in its zones: its CNAME appears here</div>'
       : a.provider === 'cloudflare' || !a.provider ? pill('ok', 'Working') + (hasT(a.zonesChecked) ? `<div class="sub">checked ${rel(a.zonesChecked)}</div>` : '')
       : pill('ok', 'Ready') + '<div class="sub">use Test to check it</div>';
     const refreshBtn = def.autoZones ? `<button data-act="refreshDNS" data-id="${a.id}">Refresh</button>`
-      : a.provider === 'acmedns' ? `<button data-act="refreshDNS" data-id="${a.id}">Check CNAMEs</button>` : '';
+      : a.provider === 'acmedns' && cn.length ? `<button data-act="showAccountCNAMEs" data-id="${a.id}">CNAMEs</button>` : '';
     return `<tr>
     <td class="main">${esc(a.name)}<div class="sub">${esc(def.name || a.provider)}</div></td>
     ${cell('Zones', zones + cnames, 'small')}
@@ -635,6 +637,45 @@ async function refreshDNS(id) {
     const a = S.dnsAccounts.find(x => x.id === id);
     toast(a?.provider === 'acmedns' ? 'CNAME records checked' : 'Zones: ' + (z.join(', ') || 'none')); refresh();
   } catch (e) { toast(e.message, true); refresh(); }
+}
+// ---- CNAME records for acme-dns, with copy buttons ----
+let cnameCtx = null; // {cert} or {account}
+function cnameRecords() {
+  if (cnameCtx?.cert) return {list: (S.dnsRoutes?.[cnameCtx.cert] || {}).cnames || [],
+    accounts: [...new Set(((S.dnsRoutes?.[cnameCtx.cert] || {}).routes || []).map(r => r.accountId))]};
+  const a = (S.dnsAccounts || []).find(x => x.id === cnameCtx?.account) || {};
+  return {list: a.cnames || [], accounts: [a.id]};
+}
+function renderCNAMEs() {
+  const {list} = cnameRecords(), open = list.filter(c => !c.ok).length;
+  $('#cnameIntro').textContent = open
+    ? `Create ${open === 1 ? 'this record' : 'these records'} once at the DNS host of your domain. After that, renewals need nothing more.`
+    : 'All records are in place. Nothing more to do.';
+  $('#cnameList').innerHTML = list.map(c => `<div class="cnrec">
+    <div class="row"><b class="mono small">${esc(c.name)}</b>${c.ok ? pill('ok', '✓ Found') : pill('warn', 'Missing')}</div>
+    <label>Type</label><div class="mono">CNAME</div>
+    <label>Name</label><div class="copyrow"><code class="copyval">${esc(c.record)}</code><button type="button" data-act="copyField">Copy</button></div>
+    <label>Target</label><div class="copyrow"><code class="copyval">${esc(c.target)}</code><button type="button" data-act="copyField">Copy</button></div>
+  </div>`).join('') || '<p class="muted">No CNAME records for this yet.</p>';
+}
+function showCNAMEs(ctx) { cnameCtx = ctx; renderCNAMEs(); cnameDlg.showModal(); }
+async function checkCNAMEs(btn) {
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    for (const id of cnameRecords().accounts) await api('POST', `/api/dns-accounts/${id}/refresh`);
+    await refresh(); renderCNAMEs();
+    const left = cnameRecords().list.filter(c => !c.ok).length;
+    toast(left ? `${left} still missing – DNS changes can take a minute` : 'All CNAME records found – issuing now', !!left);
+  } catch (e) { toast(e.message, true); }
+  finally { btn.disabled = false; btn.textContent = 'Check again'; }
+}
+async function copyField(btn) {
+  const el = btn.parentElement.querySelector('.copyval');
+  const r = document.createRange(); r.selectNodeContents(el);
+  const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); // also shows what is copied
+  try { await navigator.clipboard.writeText(el.textContent); }
+  catch { document.execCommand('copy'); } // without HTTPS the clipboard API isn't available
+  btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy', 1500);
 }
 async function testDNS(id, btn) {
   const a = S.dnsAccounts.find(x => x.id === id);
@@ -859,6 +900,10 @@ const actions = {
   editDNS: el => editDNS(el.dataset.id),
   refreshDNS: el => refreshDNS(el.dataset.id),
   testDNS: el => testDNS(el.dataset.id, el),
+  showCertCNAMEs: el => showCNAMEs({cert: el.dataset.id}),
+  showAccountCNAMEs: el => showCNAMEs({account: el.dataset.id}),
+  checkCNAMEs: el => checkCNAMEs(el),
+  copyField: el => copyField(el),
   testMail: () => testMail(),
   enrollWizard: el => enrollWizard(el.dataset.id),
   enrBack: () => enrStep(enrCur - 1),

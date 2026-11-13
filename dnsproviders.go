@@ -80,7 +80,7 @@ the <code>_acme-challenge</code> TXT records with dynamic updates. The server mu
 which you create once at your DNS host. After that, renewals need no access to your DNS at all.`,
 		Fields: []providerField{
 			{Key: "apiBase", Label: "acme-dns server", Placeholder: "https://acme-dns.example.com", Required: true,
-				Hint: "Your own acme-dns server, or a public one such as https://auth.acme-dns.io"},
+				Hint: "Your own acme-dns server, or a public one such as https://auth.acme-dns.io. Opened in a browser it shows 404 Not Found: that's normal, it only answers the app."},
 		},
 	},
 }

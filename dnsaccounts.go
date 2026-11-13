@@ -340,6 +340,23 @@ func certRoutes(c Config) map[string]any {
 		if err != nil {
 			r["error"] = err.Error()
 		}
+		// acme-dns: the CNAME records this certificate needs, and whether they exist
+		var cnames []cnameView
+		for _, rt := range routes {
+			a := c.dnsAccount(rt.Account)
+			if a == nil || a.Provider != "acmedns" {
+				continue
+			}
+			for _, reg := range a.ACMEDNS {
+				v := cnameView{reg.Name, reg.record(), reg.FullDomain, reg.CNAMEOK}
+				if reg.Name == bareName(rt.Name) && !slices.Contains(cnames, v) {
+					cnames = append(cnames, v)
+				}
+			}
+		}
+		if len(cnames) > 0 {
+			r["cnames"] = cnames
+		}
 		out[x.ID] = r
 	}
 	return out
