@@ -1,7 +1,7 @@
 # Building RouterOS ACME
 
 This file lists everything needed to build the container image, the commands, and what was verified.
-Last verified: **2026-11-10**.
+Last verified: **2026-11-13**.
 
 ## 1. Prerequisites
 
@@ -14,7 +14,7 @@ Last verified: **2026-11-10**.
 | docker buildx plugin | 0.10+ | **0.30.1** (Ubuntu `docker-buildx`) | multi-architecture builds |
 | Docker Compose v2 | 2.20+ | **2.40.3** (Ubuntu `docker-compose-v2`) | `docker compose up` with `docker-compose.yml` |
 | containerd image store | only for local multi-arch | enabled (default on new Docker 29 installs) | keeps all architectures in one local image (`docker image ls --tree`) |
-| Disk | ~0.6 GB | – | `golang:1.26-alpine` base (364 MB unpacked) plus build cache |
+| Disk | ~0.6 GB | – | `golang:1.27-alpine` base (364 MB unpacked) plus build cache |
 | RAM | 1 GB | – | Go compiler |
 
 **Not needed:** QEMU or binfmt emulation. The Dockerfile cross-compiles in the build stage, and the final stage
@@ -24,16 +24,16 @@ has no `RUN` steps, so arm64 and arm/v7 images build natively on an x86-64 machi
 
 | Host | What |
 |---|---|
-| `registry-1.docker.io` (Docker Hub) | base image `golang:1.26-alpine` (~72 MB download) |
+| `registry-1.docker.io` (Docker Hub) | base image `golang:1.27-alpine` (~72 MB download) |
 | `dl-cdn.alpinelinux.org` | `apk add ca-certificates` |
 | `proxy.golang.org`, `sum.golang.org` | Go modules from `go.mod`, checked against `go.sum` |
 
 Behind an HTTP proxy, pass Docker's built-in build args: `--build-arg HTTPS_PROXY=http://proxy:3128 --build-arg NO_PROXY=...`.
 
-**Pinned inputs:** base image tag `golang:1.26-alpine` (resolved to
-`sha256:87c65a688975c0b1d4585d204874c45ca78354670e3a5f11368c5a492303d696` on 2026-11-10). Go modules are pinned
+**Pinned inputs:** base image tag `golang:1.27-alpine` (resolved to
+`sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523` on 2026-11-13). Go modules are pinned
 in `go.mod`/`go.sum`: lego v4.35.2, golang.org/x/crypto v0.58.0, github.com/pkg/sftp v1.13.12. The final image is
-`FROM scratch`: the program, the CA bundle, and nothing else.
+`FROM scratch`: the program, the CA bundle, an empty `/data` owned by user 65532, and nothing else.
 
 ### Installing the prerequisites on Ubuntu (24.04 / 26.04)
 
@@ -51,7 +51,7 @@ On Debian/other distributions, Docker's own repository (`docker-ce`, `docker-bui
 
 | Requirement | Verified with | For |
 |---|---|---|
-| Go | 1.26+ (tested with 1.27.3) | `go build`, `go test ./...` |
+| Go | 1.26+ (tested with 1.27.4) | `go build`, `go test ./...` |
 | QEMU/KVM + MikroTik CHR image | qemu 10.x, CHR 7.25.1 | optional real-router test (`TestRealRouterOS`) |
 
 ## 2. Build
@@ -147,11 +147,23 @@ repository's workflow write access.
 - **TLS to Let's Encrypt** works with the bundled CA certificates (staging server reached).
 - Sessions are dropped on container restart (by design), so you sign in again.
 
+**Verified with the hardened amd64 image (2026-11-13, version 1.4.0):**
+- Started with `read_only`, `no-new-privileges`, `cap_drop: ALL` + `CHOWN, DAC_READ_SEARCH, SETUID, SETGID`:
+  the process runs as UID/GID 65532 with no capabilities (`CapEff 0`) and `NoNewPrivs 1`. Built-in healthcheck OK.
+- Upgrade from a v1.1.0 data volume (root-owned): handed over to 65532 on the first start; later starts change nothing.
+- Fresh install via the API: setup code, sign-in, 2FA, encrypted SMTP password, all as 65532 on a read-only root.
+- `SECRET_KEY_FILE` (root-owned, mode 0400): secrets re-encrypted and `secret.key` removed. Refused with a clear message:
+  wrong key, missing file, file removed without copying the key back. Copying it back as `secret.key` works.
+- `-reset-2fa` and `-forget-secrets` run as 65532; `user: "1000:1000"` and default Docker capabilities also work;
+  `cap_drop: ALL` alone keeps root on old data, or stops with the exact `cap_add` line once the data was handed over.
+
 **Verified on real ARM hardware (2026-11-10):** version 1.1.0, deployed with Portainer on an ARM-based QNAP NAS:
 enrolled real MikroTik routers and deployed certificates.
 
 ## 5. Notes for running
 
-- The container runs as root, so files in `./data` are root-owned with mode 0600. Read or back them up with `sudo`.
-- Back up `data/secret.key` separately from `config.json`. Without it, enrolled routers must be enrolled again.
+- The container starts as root, hands `/data` to user 65532 and then runs as that user with no capabilities. Files in
+  `./data` belong to UID 65532 with mode 0600. Read or back them up with `sudo`.
+- Back up the encryption key (`data/secret.key`, or the `SECRET_KEY_FILE`) separately from `config.json`. See README
+  "Hardened setup".
 - See `README.md` for configuration, reverse proxies and device enrollment.

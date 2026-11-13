@@ -49,6 +49,9 @@ type app struct {
 	otpFresh time.Duration // how long an entered 2FA code counts for sensitive actions (OTP_FRESH_MINUTES)
 
 	proxyWarned sync.Map // peer addresses already warned about (untrusted reverse proxy)
+
+	keySource string // where the encryption key comes from (keySource*), shown to admins
+	runUID    int    // user the process runs as (0 = root), shown to admins
 }
 
 func env(k, def string) string {
@@ -62,6 +65,7 @@ func main() {
 	health := flag.Bool("healthcheck", false, "probe the local web server and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	reset2FA := flag.String("reset-2fa", "", "turn off two-factor authentication for `USER` and exit (stop the server first)")
+	forgetSecrets := flag.Bool("forget-secrets", false, "after a lost encryption key: remove the stored secrets that can't be decrypted, and exit (stop the server first)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("routeros-acme", version)
@@ -69,6 +73,7 @@ func main() {
 	}
 	listen := env("LISTEN", ":8080")
 	if *health {
+		dropPrivileges("", false)
 		os.Exit(healthcheck(listen))
 	}
 	log.SetFlags(log.LstdFlags)
@@ -78,6 +83,23 @@ func main() {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		log.Fatal(err)
 	}
+	// Still root here (in the container): read a key that may be readable by root
+	// only, hand the data folder over, then continue as an unprivileged user.
+	keyCfg, err := readKeyConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+	priv := dropPrivileges(dataDir, true)
+	switch {
+	case priv.Warning != "":
+		log.Printf("warning: running as root: %s", priv.Warning)
+	case priv.Partial != "":
+		log.Printf("running as user %d; warning: some of the data folder could not be checked (%s)", priv.UID, priv.Partial)
+	case priv.Fixed > 0:
+		log.Printf("running as user %d (data folder handed over to it: %d items)", priv.UID, priv.Fixed)
+	default:
+		log.Printf("running as user %d", priv.UID)
+	}
 	lockErr := lockDataDir(dataDir)
 	if *reset2FA != "" {
 		if lockErr != nil {
@@ -85,20 +107,32 @@ func main() {
 		}
 		os.Exit(resetUser2FA(dataDir, *reset2FA))
 	}
+	if *forgetSecrets {
+		if lockErr != nil {
+			log.Fatalf("cannot forget secrets: %v. Stop it first, for example: docker compose stop", lockErr)
+		}
+		os.Exit(forgetLostSecrets(dataDir, keyCfg))
+	}
 	if lockErr != nil {
+		if priv.Warning != "" && errors.Is(lockErr, os.ErrPermission) {
+			log.Fatalf("data directory %s: %v. The container lacks the capabilities to switch users: "+
+				"add cap_add: [CHOWN, DAC_READ_SEARCH, SETUID, SETGID] (see docker-compose.yml), or set user: \"%d:%d\"", dataDir, lockErr, 65532, 65532)
+		}
 		log.Fatalf("data directory %s: %v", dataDir, lockErr)
 	}
 	store, err := OpenStore(dataDir)
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	sl, err := loadSealer(dataDir)
+	sl, keyRep, err := openSealer(store, dataDir, keyCfg, false)
 	if err != nil {
-		log.Fatalf("secret key: %v", err)
+		log.Fatalf("encryption key: %v", err)
 	}
+	logKeyReport(keyRep)
 	a := &app{store: store, mgr: NewManager(store, dataDir), dataDir: dataDir,
 		sessions: &sessionStore{m: map[string]session{}}, ceremonies: &ceremonyStore{m: map[string]ceremony{}}}
 	a.throttle, a.mailThrottle = newThrottle(), newThrottle()
+	a.keySource, a.runUID = keyRep.Source, priv.UID
 	a.mgr.sealer = sl
 	if n, err := store.SealSecrets(sl); err != nil {
 		log.Fatalf("encrypting stored secrets: %v", err)
@@ -161,6 +195,43 @@ func main() {
 		log.Printf("stopping: a renewal or deploy is still running; it will be repeated at the next start")
 	}
 	log.Printf("stopped")
+}
+
+func logKeyReport(rep keyReport) {
+	log.Printf("encryption key: %s", rep.Source)
+	if rep.Reencrypted > 0 {
+		log.Printf("re-encrypted %d stored secret(s) with the key from %s", rep.Reencrypted, rep.Source)
+	}
+	if rep.RemovedKey {
+		log.Printf("removed secret.key from the data folder: the key from %s is used now", rep.Source)
+	}
+	for _, f := range rep.Forgotten {
+		log.Printf("forgot: %s", f)
+	}
+}
+
+// forgetLostSecrets is the last resort after the encryption key was lost: secrets
+// that can't be decrypted are removed, so the app starts again. Devices must be
+// enrolled again, DNS tokens and the SMTP password entered again, and users set up
+// 2FA again at their next sign-in.
+func forgetLostSecrets(dataDir string, kc keyConfig) int {
+	st, err := OpenStore(dataDir)
+	if err != nil {
+		log.Printf("config: %v", err)
+		return 1
+	}
+	_, rep, err := openSealer(st, dataDir, kc, true)
+	if err != nil {
+		log.Print(err)
+		return 1
+	}
+	logKeyReport(rep)
+	if len(rep.Forgotten) == 0 {
+		log.Printf("all stored secrets can be decrypted with this key: nothing to forget")
+	} else {
+		log.Printf("forgot %d secret(s); the server starts normally again", len(rep.Forgotten))
+	}
+	return 0
 }
 
 // resetUser2FA is the last resort when a user (e.g. the only admin) has lost both the
@@ -372,8 +443,12 @@ func (a *app) getState(w http.ResponseWriter, r *http.Request) {
 	if cfg.Certs == nil {
 		cfg.Certs = []*Cert{}
 	}
+	var security map[string]any // admins only: how hardened this installation runs
+	if currentUser(r).Role == RoleAdmin {
+		security = map[string]any{"keySource": a.keySource, "runUid": a.runUID}
+	}
 	writeJSON(w, map[string]any{
-		"settings": sv, "certs": cfg.Certs, "routers": routers, "mail": mailViewOf(cfg.Mail),
+		"security": security, "settings": sv, "certs": cfg.Certs, "routers": routers, "mail": mailViewOf(cfg.Mail),
 		"dnsAccounts": dnsViews(cfg), "dnsRoutes": certRoutes(cfg),
 		"busy": a.mgr.Busy(), "now": time.Now(), "me": viewOf(currentUser(r)), "version": version,
 		"myPasskeys": passkeyViews(currentUser(r)), "proxyHint": a.proxy.proxyHint(r),

@@ -5,6 +5,7 @@
 #   tag v1.2.3          -> :1.2.3, :1.2 and :sha-<short>
 #   pull request        -> tests and build only, nothing is published
 #   manual run          -> same as a push to the branch it runs on
+#   weekly schedule     -> tests and govulncheck only
 name: container image
 
 on:
@@ -15,6 +16,8 @@ on:
   pull_request:
     paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"     # weekly: tests and govulncheck catch new advisories (no image is published)
 
 permissions:
   contents: read
@@ -37,9 +40,12 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...   # the real-router test is skipped without ROS_HOST
+      # Fails when the code calls a function with a known vulnerability.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   image:
     needs: test
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

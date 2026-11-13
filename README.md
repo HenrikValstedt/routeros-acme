@@ -65,6 +65,12 @@ a running renewal or deploy finishes the certificate or router it's working on, 
 the app exits with code 0. `docker-compose.yml` sets `stop_grace_period: 30s` because Docker's default is only 10
 seconds. Use the same line in Portainer stacks.
 
+**It runs unprivileged on its own.** The container starts as root only long enough to hand the data folder to user
+65532, then switches to that user for good, with no privileges left. Data from older versions is handed over
+automatically the first time. You don't need to set a user or change any file permissions. `docker-compose.yml` also
+turns on a read-only root filesystem and drops all capabilities except the four needed for that first moment. Use the
+same lines in Portainer stacks. Settings shows how your installation runs at the bottom of the page.
+
 ## Building
 
 See **[BUILD.md](BUILD.md)** for the prerequisites (Docker 23+, buildx, Compose v2; no QEMU needed), build
@@ -83,7 +89,8 @@ docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t routeros-
 | `DATA_DIR`       | `/data`  | Config, ACME account, certificates |
 | `LISTEN`         | `:8080`  | Web UI address |
 | `TZ`             | UTC      | Time zone for logs |
-| `SECRET_KEY`     | –        | Key for encrypting device secrets. Default: random key in `data/secret.key` |
+| `SECRET_KEY_FILE`| –        | File with the key that encrypts stored secrets, e.g. a Docker secret. See [Hardened setup](#hardened-setup) |
+| `SECRET_KEY`     | –        | The same key as a passphrase in a variable (visible in `docker inspect`, prefer `SECRET_KEY_FILE`). Default for both: a random key in `data/secret.key` |
 | `OTP_FRESH_MINUTES` | `5`   | How long a 2FA code counts for sensitive actions before you're asked again. `0` = ask every time |
 | `TRUSTED_PROXIES`| –        | Reverse proxy IPs/CIDRs (comma separated) or `private`. Only these may set `X-Forwarded-For` / `X-Forwarded-Proto` |
 | `BASE_PATH`      | –        | Serve under a sub-path, e.g. `/certs` |
@@ -203,6 +210,68 @@ only and trust the Docker range:
       TRUSTED_PROXIES: 172.29.0.0/16  # the gateway range the proxy arrives from
 ```
 
+## Hardened setup
+
+The quick start works without any of this. It is for keeping the encryption key out of backups of the data folder.
+
+Stored secrets (Cloudflare tokens, the SMTP password, device service passwords, 2FA secrets) are encrypted. By default the
+key is `data/secret.key`, right next to `config.json`. A backup or copy of the whole data folder then holds both the lock
+and the key. With `SECRET_KEY_FILE` the key lives outside the data folder, for example as a Docker secret:
+
+1. **Create a key file outside the data folder**, readable by root only. Either generate a new one:
+   ```sh
+   openssl rand -base64 32 > /share/Container/routeros-acme.key   # any path outside the data folder
+   chmod 400 /share/Container/routeros-acme.key
+   ```
+   or move the existing key out: `mv data/secret.key /share/Container/routeros-acme.key`.
+2. **Point the container at it** (in `docker-compose.yml` or the Portainer stack; the lines are there, commented out):
+   ```yaml
+   services:
+     routeros-acme:
+       environment:
+         SECRET_KEY_FILE: /run/secrets/routeros_acme_key
+       secrets:
+         - routeros_acme_key
+   secrets:
+     routeros_acme_key:
+       file: /share/Container/routeros-acme.key   # absolute path on the Docker host
+   ```
+3. **Restart.** The log shows what happened:
+   ```
+   encryption key: SECRET_KEY_FILE
+   re-encrypted 7 stored secret(s) with the key from SECRET_KEY_FILE     (only with a new key)
+   removed secret.key from the data folder: the key from SECRET_KEY_FILE is used now
+   ```
+
+The container reads the key while it is still root, so the file can stay readable by root only. **Back up the key file
+separately from the data folder.** Without it the stored secrets can't be decrypted.
+
+**Going back to the default:** copy the key file into the data folder as `secret.key`, then remove `SECRET_KEY_FILE`
+and the secret from the stack.
+
+**Safety checks.** At every start the key is checked against all stored secrets. The app refuses to start, and says
+why, when the key file is missing, when it is the wrong key, or when `SECRET_KEY_FILE` was removed without copying the
+key back. It never creates a new key over encrypted data.
+
+**Key file format.** A file of exactly 32 bytes is used as is (that is what the app generates). Anything else is a
+passphrase of at least 16 characters, without surrounding spaces or line breaks.
+
+**Key lost for good.** Stop the container and remove the secrets that can't be decrypted any more:
+```sh
+docker compose stop
+docker compose run --rm routeros-acme -forget-secrets
+docker compose start
+```
+The log lists what was removed. Enroll the listed devices again, enter DNS tokens and the SMTP password again, and the
+listed users set up 2FA again at their next sign-in. Everything else is kept: certificates, devices' settings, users and
+passwords.
+
+**Other ways to run it:**
+- `user: "1000:1000"` (your NAS user, PUID style) also works. The app then never runs as root, but the data folder must
+  already belong to that user, and the key file must be readable by it.
+- On a share that refuses ownership changes (NFS with root squash), the app keeps running as root and the log says
+  why. Nothing breaks.
+
 ## Users and roles
 
 | Role     | Can do |
@@ -292,11 +361,11 @@ Devices are **enrolled** once instead of storing an SSH login. Requires **Router
   this app plus the uploaded files are removed. If api-ssl itself gets the new certificate, the pin moves with it.
 - **Password rotation**: the service account password is changed automatically every 30 days (or with *Rotate password now*).
   The new password is saved before it is applied, so a crash can't lock the app out.
-- **Secrets at rest**: the service password is stored AES-256-GCM encrypted. The key is in `data/secret.key` (or `SECRET_KEY`).
-  Keep that file out of config backups.
+- **Secrets at rest**: the service password is stored AES-256-GCM encrypted. The key is in `data/secret.key`, or outside the
+  data folder with `SECRET_KEY_FILE` (see [Hardened setup](#hardened-setup)).
 - **Remove**: forget the device, or also delete the service account (and group) from it with a one-time admin login.
 - **Re-enroll** when the device's api-ssl certificate was changed by someone else (the pin no longer matches), the
-  address changed, or `secret.key` was lost.
+  address changed, or the encryption key was lost (see `-forget-secrets` under [Hardened setup](#hardened-setup)).
 
 RouterOS's API has no key-based login, so "passwordless" here means a machine password that no person ever sees,
 that is limited to one source address and API-only rights, and that rotates automatically.
@@ -316,6 +385,10 @@ Make sure the container can reach the device's api-ssl port, and its SSH port du
 
 - The container serves plain HTTP. Keep it on a trusted network or put it behind a reverse proxy with TLS (see above).
 - Use Cloudflare tokens scoped to just the zones they're for (one DNS account per token).
+- The app runs as an unprivileged user with no capabilities, on a read-only root filesystem (see Quick start).
+- Keep the encryption key out of data folder backups with `SECRET_KEY_FILE` ([Hardened setup](#hardened-setup)).
+- Every build runs `govulncheck`, and once a week as well. Dependabot proposes updates for Go modules, the base image and
+  GitHub Actions weekly.
 
 ## Development
 

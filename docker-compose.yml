@@ -17,5 +17,20 @@ services:
       # TRUSTED_PROXIES: 172.16.0.0/12   # proxy address(es)/CIDRs, or "private"
       # BASE_PATH: /certs                # only when served under a sub-path
       # COOKIE_SECURE: "true"            # force Secure cookie (auto when proxy sends X-Forwarded-Proto: https)
+      # Hardened setup (optional, see README): keep the encryption key out of the data folder
+      # SECRET_KEY_FILE: /run/secrets/routeros_acme_key
     volumes:
       - ./data:/data
+    # secrets:
+    #   - routeros_acme_key
+    # Hardening: nothing to set up. The app starts as root only to hand /data to an
+    # unprivileged user, then runs as that user without any privileges.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_READ_SEARCH, SETUID, SETGID]   # used only during the first moment of startup
+
+# secrets:
+#   routeros_acme_key:
+#     file: /path/outside/the/data/folder/routeros-acme.key   # e.g. created with: openssl rand -base64 32 > routeros-acme.key

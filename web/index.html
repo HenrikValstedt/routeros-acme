@@ -430,6 +430,7 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
       <div class="hint">Notifications go to every user who turned them on under <i>My account</i>, plus the extra recipients. Repeated identical errors are sent at most once per day.</div>
       <div class="foot adm"><button type="button" onclick="testMail()">Send test e-mail</button><button class="pri">Save e-mail settings</button></div>
     </fieldset></form>
+    <p class="small muted adm" id="secLine" hidden></p>
   </section>
   <section id="t-users" hidden>
     <div class="ph"><div><h2>Users</h2><p>Who can sign in, and what they may do.</p></div>
@@ -1080,6 +1081,10 @@ function fillSettings() {
   for (const k of ['host', 'port', 'security', 'user', 'from', 'publicUrl', 'warnDays', 'extraRecipients']) g[k].value = m[k] ?? '';
   for (const k of ['notifyIssueOk', 'notifyIssueFail', 'notifyDeployOk', 'notifyDeployFail', 'notifyExpiry']) g[k].checked = !!m[k];
   g.password.value = ''; g.password.placeholder = m.hasPassword ? '•••••••• (saved, leave empty to keep)' : '';
+  const sec = S.security; $('#secLine').hidden = !sec;
+  if (sec) $('#secLine').textContent = 'Encryption key: ' + (sec.keySource === 'data folder' ? 'stored in the data folder (default)' : 'from ' + sec.keySource)
+    + ' · Runs as: ' + (sec.runUid === 0 ? 'root' : 'user ' + sec.runUid)
+    + (sec.keySource === 'data folder' || sec.runUid === 0 ? ' · See "Hardened setup" in the guide to keep the key out of backups and run unprivileged.' : '');
   $('#mailState').innerHTML = m.host && m.from ? '<span class="pill ok">Configured</span>' : '<span class="pill muted">Not configured</span>';
 }
 $('#mailForm').onsubmit = async e => {
