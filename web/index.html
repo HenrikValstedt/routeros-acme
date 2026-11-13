@@ -476,6 +476,23 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
   <div class="foot"><button type="button" class="del" id="certDel" style="margin-right:auto">Delete</button><button type="button" onclick="certDlg.close()">Cancel</button><button class="pri" value="save">Save</button></div>
 </form></dialog>
 
+<dialog id="expDlg" class="sm"><form method="dialog" id="expForm">
+  <h3>Export certificate</h3>
+  <input type="hidden" name="id">
+  <div class="hint" id="expWhat" style="margin-top:0"></div>
+  <label class="inl" style="margin-top:12px"><input type="radio" name="format" value="pem" checked> <span><b>PEM files (ZIP)</b> – for Linux servers, nginx, HAProxy, Proxmox, Home Assistant …<br><span class="small muted">fullchain.pem, cert.pem, chain.pem, privkey.pem</span></span></label>
+  <label class="inl" style="margin-top:8px"><input type="radio" name="format" value="pfx"> <span><b>PFX / PKCS#12</b> – for Windows, IIS, Exchange, Java, many appliances<br><span class="small muted">one file with the certificate, chain and key, protected by a password</span></span></label>
+  <div id="expPfx" hidden>
+    <label for="expPw">PFX password</label>
+    <div style="display:flex;gap:8px"><input type="text" id="expPw" name="password" minlength="8" autocomplete="off" spellcheck="false" style="flex:1"><button type="button" id="expGen">Generate</button></div>
+    <div class="hint">At least 8 characters. You need it when importing the file. It isn't stored.</div>
+    <label class="inl" style="margin-top:10px"><input type="checkbox" name="legacy"> Compatible with older systems (Windows Server 2016 and older, older Java and appliances)</label>
+  </div>
+  <div class="info warnbox small">The download contains the <b>private key</b>. Store it safely and delete copies you no longer need.
+    Exported files don't renew themselves: export again after each renewal (turn on <i>Certificate renewed</i> notifications to be reminded).</div>
+  <div class="foot"><button type="button" onclick="expDlg.close()">Cancel</button><button class="pri" value="save">Download</button></div>
+</form></dialog>
+
 <dialog id="rtDlg"><form method="dialog" id="rtForm">
   <h3 id="rtTitle">Device</h3>
   <input type="hidden" name="id">
@@ -647,7 +664,7 @@ function toast(msg, bad) {
   const t = $('#toast'); t.textContent = msg; t.style.background = bad ? 'var(--err)' : ''; t.style.display = 'block';
   clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', bad ? 6000 : 2500);
 }
-async function api(method, path, body, retried) {
+async function api(method, path, body, retried, raw) {
   const o = {method, headers: {}, credentials: 'same-origin'};
   if (method !== 'GET') { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body ?? {}); }
   const r = await fetch(path.replace(/^\//, ''), o); // relative: works when served under a sub-path
@@ -656,13 +673,22 @@ async function api(method, path, body, retried) {
     const msg = (await r.text()).trim() || r.statusText;
     // sensitive action: ask for a fresh 2FA code, then repeat the request once
     if (r.status === 403 && msg.startsWith('otp_required') && !retried) {
-      if (await askOTP()) return api(method, path, body, true);
+      if (await askOTP()) return api(method, path, body, true, raw);
       throw new Error('Cancelled – the change was not made');
     }
     if (r.status === 403 && msg.startsWith('mfa_setup_required')) { boot(); throw new Error('Set up two-factor authentication first'); }
     throw new Error(msg.replace(/^(otp_required|mfa_setup_required): /, ''));
   }
-  return r.json();
+  return raw ? r : r.json();
+}
+// download a file the server sends back (as an attachment) from a POST
+async function download(path, body) {
+  const r = await api('POST', path, body, false, true);
+  const name = (r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'download';
+  const url = URL.createObjectURL(await r.blob()), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return name;
 }
 async function act(method, path, msg, body) {
   try { await api(method, path, body); if (msg) toast(msg); await refresh(); return true; }
@@ -1011,6 +1037,7 @@ function render() {
     ${cell('Expires', date(c.notAfter), 'small nw')}
     ${cell('Status', certStatus(c))}
     <td class="adm acts-cell"><div class="acts">
+      ${hasT(c.notAfter) ? `<button onclick="exportCert('${c.id}')">Export</button>` : ''}
       <button onclick="act('POST','/api/certs/${c.id}/issue','Renewal started')">Renew</button>
       <button onclick="editCert('${c.id}')">Edit</button></div></td></tr>`).join('')
     : emptyRow(5, 'cert', 'No certificates yet.<div class="small">Add a Cloudflare token under <b>Settings → DNS accounts</b> first, then your first certificate.</div>');
@@ -1118,6 +1145,29 @@ $('#setForm').onsubmit = async e => {
 };
 
 // ---------- certificates ----------
+function exportCert(id) {
+  const c = S.certs.find(c => c.id === id), f = $('#expForm');
+  f.reset(); f.id.value = id; $('#expPfx').hidden = true; f.password.required = false;
+  $('#expWhat').textContent = `${c.name} · ${c.domains.join(', ')} · valid until ${date(c.notAfter)}`;
+  expDlg.showModal();
+}
+$('#expForm').addEventListener('change', e => {
+  if (e.target.name !== 'format') return;
+  const pfx = e.target.value === 'pfx', f = $('#expForm');
+  $('#expPfx').hidden = !pfx; f.password.required = pfx;
+});
+$('#expGen').onclick = () => {
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789', r = crypto.getRandomValues(new Uint32Array(20));
+  $('#expPw').value = Array.from(r, n => abc[n % abc.length]).join('').replace(/(.{5})(?!$)/g, '$1-');
+};
+$('#expForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target, btn = f.querySelector('button.pri');
+  const body = {format: f.format.value, password: f.format.value === 'pfx' ? f.password.value : '', legacy: f.legacy.checked};
+  btn.disabled = true;
+  try { const name = await download(`/api/certs/${f.id.value}/export`, body); expDlg.close(); toast('Downloaded ' + name); }
+  catch (err) { toast(err.message, true); }
+  finally { btn.disabled = false; }
+};
 function editCert(id) {
   const c = S.certs.find(c => c.id === id) || {}, f = $('#certForm');
   $('#certTitle').textContent = id ? 'Edit certificate' : 'Add certificate';

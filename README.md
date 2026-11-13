@@ -152,6 +152,20 @@ per client.
 Links carry the token after `#`, so it never reaches the server or proxy access logs. Only a SHA-256 hash of each
 token is stored.
 
+## Exporting certificates
+
+To install a certificate by hand on something that isn't an enrolled router (a Linux server, a NAS, Windows/IIS, an
+appliance), admins use **Export** on the certificate. It asks for a fresh 2FA code or passkey first, because the files
+contain the private key, and every export is logged with who did it.
+
+- **PEM files (ZIP)**: `fullchain.pem` (certificate + intermediate, what nginx, HAProxy, Proxmox and most others want),
+  `cert.pem`, `chain.pem`, `privkey.pem`, and a short README.
+- **PFX / PKCS#12**: one password-protected file with the certificate, chain and key, for Windows, IIS, Exchange, Java
+  and many appliances. You type the password (or click *Generate*); it isn't stored. The default uses AES-256. Tick
+  *Compatible with older systems* for Windows Server 2016 and older, older Java and appliances (3DES).
+
+Exported files don't renew themselves. Export again after each renewal; *Certificate renewed* notifications remind you.
+
 ## Running behind a reverse proxy
 
 TLS should be handled by your reverse proxy (nginx, Caddy, Traefik, NPM…). Configure three things:

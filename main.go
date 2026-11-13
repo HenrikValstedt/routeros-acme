@@ -327,6 +327,7 @@ func (a *app) routes() http.Handler {
 	})
 	adm("POST /api/certs", a.saveCert)
 	adm("DELETE /api/certs/{id}", a.deleteCert)
+	adm("POST /api/certs/{id}/export", a.stepUp(a.exportCert)) // contains the private key
 	adm("POST /api/certs/{id}/issue", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		a.mgr.logf("renewal of certificate %s requested by %s", id, currentUser(r).Username)
