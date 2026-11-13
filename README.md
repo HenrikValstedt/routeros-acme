@@ -5,7 +5,7 @@ It is a lightweight replacement for running one
 [`foorschtbar/routeros-letsencrypt`](https://hub.docker.com/r/foorschtbar/routeros-letsencrypt) container per router,
 and is inspired by that project (see [Credits](#credits)).
 
-- One small container (a static Go binary in a `scratch` image, about 10 MB) manages **many routers**.
+- One small container (a static Go binary in a `scratch` image, about 17 MB) manages **many routers**.
 - **Device enrollment**: an admin login is used once, to set up a restricted service account. After that all
   communication goes over the encrypted RouterOS API (api-ssl) with certificate pinning. No admin credentials are stored.
 - DNS-01 validation through **Cloudflare**, **your own DNS server** (RFC 2136) or **acme-dns** (works with any DNS host),
