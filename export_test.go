@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -9,10 +10,12 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
 	"math/big"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,7 +101,7 @@ func TestCertExport(t *testing.T) {
 	admin.expect(400, "POST", "/api/certs/c1/export", map[string]any{"format": "pfx", "password": "short"})
 
 	// PEM zip
-	body := admin.expect(200, "POST", "/api/certs/c1/export", map[string]string{"format": "pem"})
+	body := exportBody(t, admin, "c1", map[string]any{"format": "pem"})
 	z, err := zip.NewReader(strings.NewReader(body), int64(len(body)))
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +135,7 @@ func TestCertExport(t *testing.T) {
 		leaf   *x509.Certificate
 		key    crypto.Signer
 	}{{"c1", false, leaf, key}, {"c1", true, leaf, key}, {"c2", false, rsaLeaf, rsaKey}, {"c2", true, rsaLeaf, rsaKey}} {
-		body := admin.expect(200, "POST", "/api/certs/"+tc.id+"/export", map[string]any{"format": "pfx", "password": "import-me-123", "legacy": tc.legacy})
+		body := exportBody(t, admin, tc.id, map[string]any{"format": "pfx", "password": "import-me-123", "legacy": tc.legacy})
 		k, c, chain, err := pkcs12.DecodeChain([]byte(body), "import-me-123")
 		if err != nil {
 			t.Fatalf("%s legacy=%v: %v", tc.id, tc.legacy, err)
@@ -155,6 +158,25 @@ func TestCertExport(t *testing.T) {
 	if logged != 5 {
 		t.Fatalf("%d exports logged, want 5", logged)
 	}
+}
+
+// exportBody downloads an export byte for byte (client.do trims whitespace, which
+// would cut a binary file that happens to end in a space or line break).
+func exportBody(t *testing.T, c *client, id string, body map[string]any) string {
+	t.Helper()
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", c.srv.URL+"/api/certs/"+id+"/export", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("export %s: %d %s", id, resp.StatusCode, out)
+	}
+	return string(out)
 }
 
 func TestFileSafe(t *testing.T) {
