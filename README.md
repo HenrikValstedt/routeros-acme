@@ -412,3 +412,20 @@ Thank you!
 
 RouterOS ACME is an independent project, written from scratch, and is not affiliated with or endorsed by
 foorschtbar. No code was copied.
+
+## License
+
+RouterOS ACME is released under the [MIT License](LICENSE). You may use, change and share it, also commercially,
+as long as the copyright notice and the license text stay with it.
+
+It is built on open-source libraries, among them [lego](https://github.com/go-acme/lego) (MIT),
+[go-webauthn](https://github.com/go-webauthn/webauthn) (BSD-3-Clause), [pkg/sftp](https://github.com/pkg/sftp)
+(BSD-2-Clause), [go-pkcs12](https://github.com/SSLMate/go-pkcs12) (BSD-3-Clause), the Go `golang.org/x` packages
+(BSD-3-Clause) and Go itself (BSD-3-Clause). The license of every library compiled into the program is included
+in the container image at `/licenses/THIRD_PARTY_LICENSES.txt`. Read it with:
+
+```sh
+docker cp routeros-acme:/licenses/THIRD_PARTY_LICENSES.txt .
+```
+
+`scripts/third-party-licenses.sh` creates that file during the image build, so it always matches the exact versions.

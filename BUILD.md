@@ -33,7 +33,7 @@ Behind an HTTP proxy, pass Docker's built-in build args: `--build-arg HTTPS_PROX
 **Pinned inputs:** base image tag `golang:1.27-alpine` (resolved to
 `sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523` on 2026-11-13). Go modules are pinned
 in `go.mod`/`go.sum`: lego v4.35.2, golang.org/x/crypto v0.58.0, github.com/pkg/sftp v1.13.12. The final image is
-`FROM scratch`: the program, the CA bundle, an empty `/data` owned by user 65532, and nothing else.
+`FROM scratch`: the program, the CA bundle, the license texts in `/licenses`, an empty `/data` owned by user 65532, and nothing else.
 
 ### Installing the prerequisites on Ubuntu (24.04 / 26.04)
 
