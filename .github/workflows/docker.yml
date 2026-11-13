@@ -37,7 +37,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable   # the newest Go, like golang:1.27-alpine in the Dockerfile; govulncheck checks its standard library
+          check-latest: true
       - run: go vet ./...
       - run: go test ./...   # the real-router test is skipped without ROS_HOST
       # Fails when the code calls a function with a known vulnerability.
