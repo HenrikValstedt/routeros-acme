@@ -298,18 +298,15 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
 <section class="band" id="start">
   <div class="wrap">
     <div class="head"><div class="eyebrow">Get started</div><h2>Up and running in six steps</h2>
-      <p class="lede">You need Docker with Compose, access to the GitHub repository, a domain at Cloudflare, on your own DNS server or at any DNS host (with acme-dns), and a MikroTik router on RouterOS 7.</p></div>
+      <p class="lede">You need Docker with Compose, a domain at Cloudflare, on your own DNS server or at any DNS host (with acme-dns), and a MikroTik router on RouterOS 7.</p></div>
     <div class="steps">
 
       <div class="step">
         <div class="txt"><div class="num"></div><h3>Pull and start the container</h3>
-          <p>The image is published privately on GitHub's container registry, for amd64, arm64 and arm/v7. Docker picks the right one.</p>
-          <p>Log in once with your GitHub username and a token that can read packages, then start it with <code>docker-compose.yml</code> from the repository. Configuration and certificates live in <code>./data</code>.</p>
+          <p>The image is published publicly on GitHub's container registry, for amd64, arm64 and arm/v7. Docker picks the right one.</p>
+          <p>Start it with <code>docker-compose.yml</code> from the repository. Configuration and certificates live in <code>./data</code>.</p>
           <p>On first start the log prints a one-time <b>setup code</b>.</p></div>
-        <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># once: a GitHub token with read:packages as password</span>
-docker login ghcr.io -u &lt;github-username&gt;
-
-<span class="c"># with docker-compose.yml from the repository</span>
+        <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># with docker-compose.yml from the repository</span>
 docker compose pull
 docker compose up -d
 docker compose logs | grep "Setup code"
@@ -445,7 +442,7 @@ docker compose pull
 docker compose up -d
 docker compose logs | head -1
 <span class="c"># RouterOS ACME 1.6.3</span></pre></div>
-        <div class="note"><b>Access for colleagues</b>Add them as collaborators on the GitHub repository. They log in to ghcr.io with their own token; nobody shares yours.</div>
+        <div class="note"><b>Open source</b>MIT licensed. Source code, issues and feature requests at <a href="https://github.com/HenrikValstedt/routeros-acme" target="_blank" rel="noopener">github.com/HenrikValstedt/routeros-acme</a>. No login needed to pull the image.</div>
         <div class="note"><b>What changed</b>Every version has release notes on the repository's Releases page. Upgrades keep <code>data/</code> as it is.</div>
       </div>
     </div>
