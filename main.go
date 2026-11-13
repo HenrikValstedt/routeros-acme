@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,8 +30,15 @@ import (
 // The Dockerfile passes it from the VERSION build argument.
 var version = "dev"
 
-//go:embed web/index.html
+//go:embed web/index.html web/app.js web/app.css
 var webFS embed.FS
+
+// contentSecurityPolicy lets the page run only the app's own script and styles: no
+// inline scripts, event handlers or style attributes, nothing from other sites, no
+// plugins, and no framing. If text from a router, DNS provider or user ever slipped
+// through unescaped, the browser would still refuse to run it.
+const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; " +
+	"manifest-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
 type app struct {
 	store        *Store
@@ -280,11 +290,23 @@ func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 
-	page, _ := webFS.ReadFile("web/index.html")
+	page, assets := webAssets()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(page)
 	})
+	for name, f := range assets {
+		mux.HandleFunc("GET /"+name, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", f.ctype)
+			if r.URL.Query().Get("v") == f.hash {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable") // the URL changes with the content
+			} else {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
+			w.Write(f.data)
+		})
+	}
 
 	// public
 	mux.HandleFunc("GET /api/session", a.getSession)
@@ -380,7 +402,10 @@ func (a *app) routes() http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'")
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		if peer, ok := a.proxy.untrustedProxy(r); ok {
 			a.warnProxyOnce(peer) // once per address, for every kind of request
 		}
@@ -394,6 +419,27 @@ func (a *app) routes() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+type webAsset struct {
+	data        []byte
+	ctype, hash string
+}
+
+// webAssets returns the page, with links to app.js and app.css that carry a hash of
+// their content (app.js?v=…), so browsers can cache them and still get a new version
+// right after an update.
+func webAssets() ([]byte, map[string]webAsset) {
+	page, _ := webFS.ReadFile("web/index.html")
+	assets := map[string]webAsset{}
+	for name, ctype := range map[string]string{"app.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"} {
+		b, _ := webFS.ReadFile("web/" + name)
+		sum := sha256.Sum256(b)
+		a := webAsset{data: b, ctype: ctype, hash: hex.EncodeToString(sum[:6])}
+		assets[name] = a
+		page = bytes.Replace(page, []byte(`"`+name+`"`), []byte(`"`+name+"?v="+a.hash+`"`), 1)
+	}
+	return page, assets
 }
 
 // warnProxyOnce logs, once per address, that a reverse proxy isn't trusted.

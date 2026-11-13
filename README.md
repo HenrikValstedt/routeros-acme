@@ -400,6 +400,9 @@ Make sure the container can reach the device's api-ssl port, and its SSH port du
 - The container serves plain HTTP. Keep it on a trusted network or put it behind a reverse proxy with TLS (see above).
 - Use Cloudflare tokens scoped to just the zones they're for (one DNS account per token).
 - The app runs as an unprivileged user with no capabilities, on a read-only root filesystem (see Quick start).
+- The web UI sends a strict Content Security Policy: the browser runs only the app's own script and styles (no inline
+  code, nothing from other sites, no framing). Even if text from a router or a DNS provider ever slipped through
+  unescaped, the browser would refuse to run it.
 - Keep the encryption key out of data folder backups with `SECRET_KEY_FILE` ([Hardened setup](#hardened-setup)).
 - Every build runs `govulncheck`, and once a week as well. Dependabot proposes updates for Go modules, the base image and
   GitHub Actions weekly.
