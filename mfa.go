@@ -79,6 +79,7 @@ func (a *app) postLoginOTP(w http.ResponseWriter, r *http.Request) {
 				name = u.Username
 			}
 		})
+		a.acctThrottle.fail(accountKey(name)) // wrong codes count for the account too
 		a.mgr.logf("2FA code rejected for %q from %s", name, ip)
 		fail(w, http.StatusUnauthorized, errors.New("wrong or expired code"))
 		return
@@ -87,6 +88,7 @@ func (a *app) postLoginOTP(w http.ResponseWriter, r *http.Request) {
 	a.sessions.remove(tok)
 	a.setCookie(w, r, a.sessions.create(s.userID, false, time.Now()), int(sessionTTL.Seconds()))
 	v := a.touchLogin(s.userID)
+	a.acctThrottle.ok(accountKey(v.Username))
 	if recovery {
 		a.mgr.logf("user %q signed in from %s with password + recovery code (%d left)", v.Username, ip, v.RecoveryLeft)
 	} else {

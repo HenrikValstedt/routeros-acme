@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -75,6 +76,21 @@ func (a *app) relyingParty(r *http.Request) (*webauthn.WebAuthn, string, error) 
 	scheme := "https"
 	if !https {
 		scheme = "http" // localhost only
+	}
+	// With a Public URL set (Settings → E-mail), passkeys belong to that address only,
+	// whatever Host header a request carries.
+	var pub string
+	if a.store != nil {
+		a.store.Read(func(c *Config) { pub = c.Mail.PublicURL })
+	}
+	if pub != "" {
+		u, err := url.Parse(pub)
+		if err == nil && u.Host != "" {
+			want := strings.TrimSuffix(strings.ToLower(u.Host), ":443")
+			if want != strings.ToLower(host) || u.Scheme != scheme {
+				return nil, "", fmt.Errorf("passkeys work at %s (the Public URL under Settings → E-mail) – open RouterOS ACME there", strings.TrimRight(pub, "/"))
+			}
+		}
 	}
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID: hostname, RPDisplayName: "RouterOS ACME", RPOrigins: []string{scheme + "://" + host},

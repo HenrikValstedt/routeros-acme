@@ -125,21 +125,33 @@ func (s *sessionStore) removeUser(userID, keepToken string) {
 	}
 }
 
-// ---- login throttling: 5 failures per client IP => locked for 5 minutes ----
+// ---- login throttling ----
+// Per client IP: 5 failures => that address is locked for 5 minutes.
+// Per account:  10 failures, from any addresses => password sign-in to that account is
+// locked for 15 minutes (passkey sign-in still works, so an attacker can't lock out an
+// admin who has a passkey). Unknown usernames are counted the same way.
 
 type throttle struct {
-	mu sync.Mutex
-	m  map[string]*struct {
+	mu    sync.Mutex
+	limit int
+	lock  time.Duration
+	m     map[string]*struct {
 		fails int
 		until time.Time
 	}
 }
 
-func newThrottle() *throttle {
-	return &throttle{m: map[string]*struct {
+func newThrottle() *throttle { return newThrottleN(5, 5*time.Minute) }
+
+func newThrottleN(limit int, lock time.Duration) *throttle {
+	return &throttle{limit: limit, lock: lock, m: map[string]*struct {
 		fails int
 		until time.Time
 	}{}}
+}
+
+func accountKey(username string) string {
+	return "user:" + strings.ToLower(strings.TrimSpace(username))
 }
 
 func (t *throttle) blocked(ip string) bool {
@@ -160,8 +172,8 @@ func (t *throttle) fail(ip string) {
 		}{}
 		t.m[ip] = e
 	}
-	if e.fails++; e.fails >= 5 {
-		e.fails, e.until = 0, time.Now().Add(5*time.Minute)
+	if e.fails++; e.fails >= t.limit {
+		e.fails, e.until = 0, time.Now().Add(t.lock)
 	}
 }
 
@@ -394,6 +406,11 @@ func (a *app) postLogin(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
+	if a.acctThrottle.blocked(accountKey(in.Username)) {
+		a.mgr.logf("login for %q from %s refused: too many failed attempts for this account", in.Username, ip)
+		fail(w, http.StatusTooManyRequests, errors.New("too many failed sign-ins for this account, try again in 15 minutes (signing in with a passkey still works)"))
+		return
+	}
 	var id, hash string
 	var twoFA bool
 	a.store.Read(func(c *Config) {
@@ -406,6 +423,7 @@ func (a *app) postLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if id == "" || bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) != nil {
 		a.throttle.fail(ip)
+		a.acctThrottle.fail(accountKey(in.Username))
 		a.mgr.logf("login failed for %q from %s", in.Username, ip)
 		fail(w, http.StatusUnauthorized, errors.New("wrong username or password"))
 		return

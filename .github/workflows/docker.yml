@@ -34,29 +34,31 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      # Actions are pinned to exact commits (a moved tag can't change what runs); Dependabot updates them.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: stable   # the newest Go, like golang:1.27-alpine in the Dockerfile; govulncheck checks its standard library
+          go-version: "1.27"   # newest 1.27.x, the same as golang:1.27-alpine in the Dockerfile (and go.mod)
           check-latest: true
       - run: go vet ./...
       - run: go test ./...   # the real-router test is skipped without ROS_HOST
-      # Fails when the code calls a function with a known vulnerability.
-      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      # Fails when the code calls a function with a known vulnerability. Its version is pinned
+      # in go.mod (a "tool" dependency, checked by go.sum) and updated by Dependabot.
+      - run: go tool govulncheck ./...
 
   image:
     needs: test
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Cross-compiled in the Dockerfile, so no QEMU is needed for arm64 / arm/v7.
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to ghcr.io
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -64,7 +66,7 @@ jobs:
 
       - name: Tags and labels
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE }}
           tags: |
@@ -81,7 +83,7 @@ jobs:
           echo "Building version $v"
 
       - name: Build and push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           build-args: VERSION=${{ steps.ver.outputs.version }}

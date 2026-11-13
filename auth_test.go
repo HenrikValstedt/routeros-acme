@@ -74,7 +74,7 @@ func newTestApp(t *testing.T) (*app, *httptest.Server) {
 	}
 	a := &app{store: st, mgr: NewManager(st, dir), dataDir: dir, sessions: &sessionStore{m: map[string]session{}},
 		ceremonies: &ceremonyStore{m: map[string]ceremony{}}}
-	a.throttle, a.mailThrottle = newThrottle(), newThrottle()
+	a.throttle, a.mailThrottle, a.acctThrottle = newThrottle(), newThrottle(), newThrottleN(10, 15*time.Minute)
 	a.mgr.sealer, _ = loadSealer(dir)
 	a.otpFresh = 5 * time.Minute
 	if err := a.initUsers(); err != nil {

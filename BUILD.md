@@ -30,8 +30,8 @@ has no `RUN` steps, so arm64 and arm/v7 images build natively on an x86-64 machi
 
 Behind an HTTP proxy, pass Docker's built-in build args: `--build-arg HTTPS_PROXY=http://proxy:3128 --build-arg NO_PROXY=...`.
 
-**Pinned inputs:** base image tag `golang:1.27-alpine` (resolved to
-`sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523` on 2026-11-13). Go modules are pinned
+**Pinned inputs:** base image `golang:1.27-alpine`, pinned by digest in the Dockerfile (Dependabot updates it):
+`sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523` on 2026-11-13. Go modules are pinned
 in `go.mod`/`go.sum`: lego v4.35.2, golang.org/x/crypto v0.58.0, github.com/pkg/sftp v1.13.12. The final image is
 `FROM scratch`: the program, the CA bundle, the license texts in `/licenses`, an empty `/data` owned by user 65532, and nothing else.
 
@@ -51,7 +51,7 @@ On Debian/other distributions, Docker's own repository (`docker-ce`, `docker-bui
 
 | Requirement | Verified with | For |
 |---|---|---|
-| Go | 1.26+ (tested with 1.27.4) | `go build`, `go test ./...` |
+| Go | 1.27+ (tested with 1.27.4) | `go build`, `go test ./...` |
 | QEMU/KVM + MikroTik CHR image | qemu 10.x, CHR 7.25.1 | optional real-router test (`TestRealRouterOS`) |
 
 ## 2. Build

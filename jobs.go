@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -250,6 +251,18 @@ func (m *Manager) session(r *Router) (*apiClient, string, error) {
 			return nil
 		})
 		m.logf("[%s] completed an interrupted password rotation", r.Name)
+	}
+	// Several pins exist only while api-ssl switches certificates. Once the router has
+	// logged in with one of them, the others (the enrollment one, the previous one) are
+	// no longer accepted.
+	if len(r.Pins) > 1 && c.peerFP != "" && slices.Contains(r.Pins, c.peerFP) {
+		_ = m.store.Update(func(cf *Config) error {
+			if x := cf.router(r.ID); x != nil && slices.Contains(x.Pins, c.peerFP) {
+				x.Pins = []string{c.peerFP}
+			}
+			return nil
+		})
+		m.logf("[%s] api-ssl certificate pin updated: only the current certificate is accepted now", r.Name)
 	}
 	return c, pw, nil
 }

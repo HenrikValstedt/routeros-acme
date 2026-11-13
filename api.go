@@ -171,22 +171,27 @@ func encodeLen(length int) []byte {
 	}
 }
 
+// maxWord limits one API word from the router. Real replies are far smaller; without a
+// limit a faulty or hostile device could announce up to 4 GiB, which overflows int on
+// 32-bit ARM (a crash) or exhausts memory elsewhere.
+const maxWord = 1 << 20
+
 func decodeLen(r *bufio.Reader) (int, error) {
 	b, err := r.ReadByte()
 	if err != nil {
 		return 0, err
 	}
 	var extra int
-	var n int
+	var n uint64 // the 4/5-byte forms don't fit int on 32-bit ARM
 	switch {
 	case b&0x80 == 0:
 		return int(b), nil
 	case b&0xC0 == 0x80:
-		n, extra = int(b&0x3F), 1
+		n, extra = uint64(b&0x3F), 1
 	case b&0xE0 == 0xC0:
-		n, extra = int(b&0x1F), 2
+		n, extra = uint64(b&0x1F), 2
 	case b&0xF0 == 0xE0:
-		n, extra = int(b&0x0F), 3
+		n, extra = uint64(b&0x0F), 3
 	case b == 0xF0:
 		n, extra = 0, 4
 	default:
@@ -197,7 +202,10 @@ func decodeLen(r *bufio.Reader) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		n = n<<8 | int(x)
+		n = n<<8 | uint64(x)
 	}
-	return n, nil
+	if n > maxWord {
+		return 0, fmt.Errorf("api: the router sent a %d-byte word, more than the %d bytes allowed", n, maxWord)
+	}
+	return int(n), nil
 }

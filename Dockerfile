@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # Multi-arch: docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t routeros-acme .
 # The build stage runs natively and cross-compiles (no QEMU needed).
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
+# The base image is pinned by digest (Dependabot updates it); the tag says which Go it is.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523 AS build
 RUN apk add --no-cache ca-certificates
 WORKDIR /src
 COPY go.mod go.sum ./

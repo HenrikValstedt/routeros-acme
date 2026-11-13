@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,9 +22,16 @@ func TestAPILengthEncoding(t *testing.T) {
 	for _, n := range []int{0, 1, 0x7f, 0x80, 0x3fff, 0x4000, 0x1fffff, 0x200000, 0xfffffff, 0x10000000} {
 		b := encodeLen(n)
 		got, err := decodeLen(bufio.NewReader(bytes.NewReader(b)))
-		if err != nil || got != n {
+		if n <= maxWord && (err != nil || got != n) {
 			t.Errorf("len %#x: encoded %x decoded %#x err %v", n, b, got, err)
 		}
+		if n > maxWord && err == nil {
+			t.Errorf("len %#x: a word above the limit must be refused", n)
+		}
+	}
+	// the largest 5-byte length: on 32-bit ARM this used to overflow int (a negative make() => crash)
+	if _, err := decodeLen(bufio.NewReader(bytes.NewReader([]byte{0xF0, 0xFF, 0xFF, 0xFF, 0xFF}))); err == nil {
+		t.Fatal("a 4 GiB word must be refused")
 	}
 }
 
@@ -178,6 +186,32 @@ func TestRealRouterOS(t *testing.T) {
 	if c.peerFP != lastFP {
 		t.Fatalf("api-ssl serves %s, want deployed %s", c.peerFP, lastFP)
 	}
+	// 5b. a session through the Manager keeps only the pin api-ssl presents now: the
+	// enrollment pin and the earlier deploy's pin are no longer accepted.
+	if len(dev.Pins) < 2 {
+		t.Fatalf("expected several pins after two deploys, have %v", dev.Pins)
+	}
+	oldPins := slices.DeleteFunc(slices.Clone(dev.Pins), func(p string) bool { return p == lastFP })
+	mdir := t.TempDir()
+	mst, _ := OpenStore(mdir)
+	mdev := dev
+	mdev.ID = "r1"
+	_ = mst.Update(func(cf *Config) error { cf.Routers = []*Router{&mdev}; return nil })
+	m := NewManager(mst, mdir)
+	m.sealer = sl
+	ms, _, err := m.session(mst.Snapshot().router("r1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms.Close()
+	if got := mst.Snapshot().router("r1").Pins; len(got) != 1 || got[0] != lastFP {
+		t.Fatalf("pins after a session: %v, want only %s", got, lastFP)
+	}
+	if _, err := dialAPI(host, apiPort, oldPins); err == nil || !strings.Contains(err.Error(), "not the pinned") {
+		t.Fatalf("an old pin alone must be refused: %v", err)
+	}
+	t.Logf("pins: %d before, 1 after (old ones refused)", len(oldPins)+1)
+
 	certs, _ := c.run("/certificate/print", "=.proplist=name,fingerprint")
 	var mine []string
 	for _, x := range certs {

@@ -36,6 +36,24 @@ func TestRelyingPartyRules(t *testing.T) {
 	}
 }
 
+// With a Public URL set, passkeys only work at that address, whatever the Host header says.
+func TestRelyingPartyPublicURL(t *testing.T) {
+	a, _ := newTestApp(t)
+	a.proxy, _ = parseTrustedProxies("10.0.0.0/8")
+	_ = a.store.Update(func(c *Config) error { c.Mail.PublicURL = "https://certs.example.com"; return nil })
+	for _, c := range []struct {
+		host string
+		ok   bool
+	}{{"certs.example.com", true}, {"Certs.Example.com:443", true}, {"evil.example.net", false}, {"certs.example.com:8443", false}} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Host, r.RemoteAddr = c.host, "10.0.0.1:1"
+		r.Header.Set("X-Forwarded-Proto", "https")
+		if _, _, err := a.relyingParty(r); c.ok != (err == nil) {
+			t.Errorf("%s: %v", c.host, err)
+		}
+	}
+}
+
 func TestPasskeyEndpointsGuarded(t *testing.T) {
 	a, srv := newTestApp(t)
 	admin := newClient(t, srv) // httptest server: Host is 127.0.0.1 -> passkeys unavailable

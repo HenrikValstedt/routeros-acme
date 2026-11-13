@@ -48,6 +48,7 @@ type app struct {
 	throttle     *throttle      // logins, setup, invite/reset tokens
 	ceremonies   *ceremonyStore // passkey sign-in/registration in progress
 	mailThrottle *throttle      // "forgot password" e-mails
+	acctThrottle *throttle      // failed sign-ins per account, from any address
 
 	setupCode string // one-time code for first-run admin creation (empty once users exist)
 
@@ -141,7 +142,7 @@ func main() {
 	logKeyReport(keyRep)
 	a := &app{store: store, mgr: NewManager(store, dataDir), dataDir: dataDir,
 		sessions: &sessionStore{m: map[string]session{}}, ceremonies: &ceremonyStore{m: map[string]ceremony{}}}
-	a.throttle, a.mailThrottle = newThrottle(), newThrottle()
+	a.throttle, a.mailThrottle, a.acctThrottle = newThrottle(), newThrottle(), newThrottleN(10, 15*time.Minute)
 	a.keySource, a.runUID = keyRep.Source, priv.UID
 	a.mgr.sealer = sl
 	if n, err := store.SealSecrets(sl); err != nil {
@@ -645,6 +646,11 @@ func (a *app) saveRouter(w http.ResponseWriter, r *http.Request) {
 		if serviceNames[s] && !slices.Contains(svcs, s) {
 			svcs = append(svcs, s)
 		}
+	}
+	// Extra commands run on the router at the next deploy, like enrolling a device:
+	// changing them needs a fresh 2FA code or passkey.
+	if old := a.store.Snapshot().router(in.ID); old != nil && strings.TrimSpace(old.ExtraCmds) != strings.TrimSpace(in.ExtraCmds) && !a.requireFresh(w, r) {
+		return
 	}
 	err := a.store.Update(func(c *Config) error {
 		if in.CertID != "" && c.cert(in.CertID) == nil {

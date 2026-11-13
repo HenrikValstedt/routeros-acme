@@ -196,8 +196,38 @@ func validateConfig(provider string, cfg, sec map[string]string, hasSecret func(
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 			return errors.New("enter the acme-dns server as a URL, e.g. https://acme-dns.example.com")
 		}
+		if u.Scheme == "http" && !localOnly(u.Hostname()) {
+			return errors.New("use https:// for an acme-dns server on the internet: over http:// its password would travel unencrypted (http:// is allowed for local and private addresses only)")
+		}
 	}
 	return nil
+}
+
+// localOnly reports whether host is localhost or resolves only to loopback, private or
+// link-local addresses.
+func localOnly(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ips := []net.IP{net.ParseIP(host)}
+	if ips[0] == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil || len(addrs) == 0 {
+			return false
+		}
+		ips = ips[:0]
+		for _, a := range addrs {
+			ips = append(ips, a.IP)
+		}
+	}
+	for _, ip := range ips {
+		if !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- Test: prove that the credentials can create a record that DNS then serves ----

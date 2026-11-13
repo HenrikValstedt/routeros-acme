@@ -344,6 +344,8 @@ passwords.
 - Changing a user's password signs them out everywhere. Deleting a user takes effect immediately, and so does a role change.
 - Sessions use an HttpOnly, SameSite=Strict cookie and last 7 days. They are kept in memory, so everyone signs in again after a container restart.
 - After 5 failed logins from one client IP address, logins from that address are blocked for 5 minutes. Behind a proxy this is the real client IP (see `TRUSTED_PROXIES`).
+- After 10 failed passwords or 2FA codes for one account, from any addresses, password sign-in to that account is
+  blocked for 15 minutes. Signing in with a passkey still works, so this can't be used to lock out an admin who has one.
 - Lost the only admin password? Use *Forgot password?* if e-mail is set up. Otherwise stop the container and remove the `"users"` entries from `data/config.json`.
   On the next start you get a new setup code, or you can set `ADMIN_PASSWORD`.
 
@@ -359,7 +361,7 @@ password alone isn't enough.
 - **Signing in:** password, then the 6-digit code (or a recovery code). Each code works only once, and wrong codes are
   rate-limited like wrong passwords.
 - **Sensitive actions ask for a fresh code** ("Confirm it's you"), even when you're signed in: enrolling a device,
-  removing a device with cleanup, adding or changing DNS credentials, a new SMTP password, switching off "2FA for everyone", creating or
+  removing a device with cleanup, changing a device's extra commands, adding or changing DNS credentials, exporting a certificate, a new SMTP password, switching off "2FA for everyone", creating or
   promoting an admin, changing another user's password, inviting an admin, deleting a user, resetting someone's 2FA,
   and new recovery codes. A code counts for 5 minutes (`OTP_FRESH_MINUTES`).
 - **Viewers:** 2FA is optional (*My account → Set up two-factor authentication*). Settings has a switch to
@@ -386,6 +388,7 @@ security key) under *My account → Passkeys*.
 - **The code stays the foundation and the fallback.** A passkey can only be added while 2FA is on. Adding or removing
   one needs a fresh code or passkey. Turning 2FA off, an admin's *Reset 2FA* and `-reset-2fa` also remove passkeys.
 - **Passkeys need HTTPS and a host name,** for example `https://certs.example.com` through a reverse proxy (see below).
+  When **Public URL** is set (Settings → E-mail), passkeys work only at that address, whatever host name a request claims.
   They don't work on `http://192.168.x.x:8080`; the UI explains this, and password plus code works there as always. A
   passkey belongs to the address it was created on, so if the address changes, add the passkeys again.
 - The reverse proxy must pass the original host name on (`Host` header). Caddy, Traefik and Nginx Proxy Manager do this
