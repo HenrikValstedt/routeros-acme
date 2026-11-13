@@ -159,7 +159,7 @@ func TestDNSAccountsAPI(t *testing.T) {
 	if len(st.DNS) != 2 || st.DNS[1].Name != "b.example" || strings.Join(st.DNS[1].Zones, ",") != "b.example,sub.a.example" || !st.DNS[0].HasToken {
 		t.Fatalf("%+v", st.DNS)
 	}
-	if strings.Contains(raw, "tok-a") || strings.Contains(raw, `"token"`) {
+	if strings.Contains(raw, "tok-a") || strings.Contains(raw, `"token":"`) {
 		t.Fatal("token sent to the browser")
 	}
 	ids := map[string]string{st.DNS[0].Name: st.DNS[0].ID, st.DNS[1].Name: st.DNS[1].ID}

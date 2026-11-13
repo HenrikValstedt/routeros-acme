@@ -212,9 +212,9 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
 <section class="hero" id="overview">
   <div class="wrap">
     <div>
-      <div class="eyebrow">Self-hosted · one small container · v1.5.1</div>
+      <div class="eyebrow">Self-hosted · one small container · v1.6.0</div>
       <h1 style="margin-top:12px">Let's Encrypt for your <span>MikroTik routers</span>, without the scripts.</h1>
-      <p class="lede">RouterOS ACME issues and renews certificates through Cloudflare DNS and installs them on your routers over the encrypted RouterOS API. You enroll each router once from the web UI. After that it runs by itself.</p>
+      <p class="lede">RouterOS ACME issues and renews certificates through DNS validation (Cloudflare, your own DNS server, or acme-dns for any DNS host) and installs them on your routers over the encrypted RouterOS API. You enroll each router once from the web UI. After that it runs by itself.</p>
       <div class="chips">
         <span class="chip">Wildcard certificates</span><span class="chip">RouterOS 7</span><span class="chip">amd64 · arm64 · armv7</span><span class="chip">~4 MB download</span>
       </div>
@@ -234,7 +234,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
       <p class="lede">It replaces a container per router with a single service that knows all your certificates and devices. Inspired by <a href="https://hub.docker.com/r/foorschtbar/routeros-letsencrypt" target="_blank" rel="noopener">foorschtbar/routeros-letsencrypt</a>.</p></div>
     <div class="features">
       <div class="feat"><span class="ic"><svg><use href="#i-cert"/></svg></span><h3>Certificates via DNS</h3>
-        <p>Let's Encrypt validates through a Cloudflare TXT record, so wildcards work and nothing has to be open to the internet. One wildcard can serve many routers.</p></div>
+        <p>Let's Encrypt validates through a TXT record at Cloudflare, on your own DNS server (RFC 2136), or via acme-dns for any DNS host, so wildcards work and nothing has to be open to the internet. One wildcard can serve many routers.</p></div>
       <div class="feat"><span class="ic"><svg><use href="#i-router"/></svg></span><h3>Device enrollment</h3>
         <p>Connect a router once with an admin login. It gets a restricted service account, and from then on everything goes over api-ssl with a pinned certificate.</p></div>
       <div class="feat"><span class="ic"><svg><use href="#i-box"/></svg></span><h3>Automatic renewal</h3>
@@ -253,7 +253,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
   <div class="wrap">
     <div class="head"><div class="eyebrow">How it works</div><h2>From order to router in four hops</h2>
       <p class="lede">RouterOS ACME sits between Let's Encrypt, your DNS and your routers. Routers never talk to Let's Encrypt themselves.</p></div>
-    <div class="diagram" role="img" aria-label="Diagram: RouterOS ACME orders a certificate from Let's Encrypt, proves domain ownership with a TXT record in Cloudflare DNS, and installs the certificate on each router over api-ssl.">
+    <div class="diagram" role="img" aria-label="Diagram: RouterOS ACME orders a certificate from Let's Encrypt, proves domain ownership with a TXT record in DNS (Cloudflare, your own DNS server or acme-dns), and installs the certificate on each router over api-ssl.">
       <svg viewBox="0 0 900 360" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ar" d="M0 0L10 5L0 10z"/></marker>
@@ -264,7 +264,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
         <rect class="box" x="20" y="16" width="230" height="86" rx="14"/>
         <text class="t" x="135" y="54" text-anchor="middle">Let's Encrypt</text><text class="s" x="135" y="78" text-anchor="middle">certificate authority</text>
         <rect class="box" x="650" y="16" width="230" height="86" rx="14"/>
-        <text class="t" x="765" y="54" text-anchor="middle">Cloudflare DNS</text><text class="s" x="765" y="78" text-anchor="middle">_acme-challenge TXT</text>
+        <text class="t" x="765" y="54" text-anchor="middle">Your DNS</text><text class="s" x="765" y="78" text-anchor="middle">_acme-challenge TXT</text>
         <rect class="box me" x="335" y="128" width="230" height="96" rx="16"/>
         <text class="t" x="450" y="170" text-anchor="middle">RouterOS ACME</text><text class="s" x="450" y="194" text-anchor="middle">container · web UI · scheduler</text>
         <path class="ln" d="M335 160 C290 160 250 130 205 104" marker-end="url(#a)"/>
@@ -282,13 +282,13 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
     </div>
     <ol class="flowlist">
       <li><b>1 · Order</b>RouterOS ACME asks Let's Encrypt for a certificate.</li>
-      <li><b>2 · Prove</b>It creates the _acme-challenge TXT record in Cloudflare.</li>
+      <li><b>2 · Prove</b>It creates the _acme-challenge TXT record in your DNS.</li>
       <li><b>3 · Check</b>Let's Encrypt reads the record and issues the certificate.</li>
       <li><b>4 · Install</b>Each enrolled router receives it over api-ssl with a pinned certificate.</li>
     </ol>
     <div class="legend">
       <div><b>Order</b>An ACME order for your names, wildcards included. Key type RSA or ECDSA.</div>
-      <div><b>Prove</b>A short-lived TXT record, using the Cloudflare token whose zone contains the name.</div>
+      <div><b>Prove</b>A short-lived TXT record, using the DNS account whose zone contains the name.</div>
       <div><b>Check</b>Let's Encrypt verifies, the record is removed, the certificate is stored.</div>
       <div><b>Install</b>Imported, assigned to services, old copies removed. Unchanged routers are skipped.</div>
     </div>
@@ -298,7 +298,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
 <section class="band" id="start">
   <div class="wrap">
     <div class="head"><div class="eyebrow">Get started</div><h2>Up and running in six steps</h2>
-      <p class="lede">You need Docker with Compose, access to the GitHub repository, a domain in Cloudflare and a MikroTik router on RouterOS 7.</p></div>
+      <p class="lede">You need Docker with Compose, access to the GitHub repository, a domain at Cloudflare, on your own DNS server or at any DNS host (with acme-dns), and a MikroTik router on RouterOS 7.</p></div>
     <div class="steps">
 
       <div class="step">
@@ -327,10 +327,10 @@ docker compose logs | grep "Setup code"
       </div>
 
       <div class="step">
-        <div class="txt"><div class="num"></div><h3>Connect Let's Encrypt and Cloudflare</h3>
+        <div class="txt"><div class="num"></div><h3>Connect Let's Encrypt and your DNS</h3>
           <ul>
             <li>Enter the e-mail address for your Let's Encrypt account.</li>
-            <li>Under <b>DNS accounts</b>, add a Cloudflare API token made from the <b>Edit zone DNS</b> template (Zone:Read, DNS:Edit). Add one per Cloudflare account or zone; each certificate uses the right one automatically.</li>
+            <li>Under <b>DNS accounts</b>, add how the app creates DNS records: a <b>Cloudflare</b> API token (<b>Edit zone DNS</b> template), your <b>own DNS server</b> (RFC 2136 with a TSIG key), or <b>acme-dns</b> for any DNS host: you create one CNAME per name once. Click <b>Test</b> to check it. Each certificate uses the right account automatically.</li>
             <li>Tick <b>staging</b> while you test, so you don't hit Let's Encrypt rate limits.</li>
             <li>Optional: add SMTP for notifications, invitations and password reset.</li>
           </ul></div>
@@ -433,18 +433,18 @@ docker compose logs | grep "Setup code"
       <div class="tablewrap"><table>
         <thead><tr><th>Tag</th><th>Points to</th><th>Use it for</th></tr></thead>
         <tbody>
-          <tr><td>1.5.1</td><td>this release</td><td>Servers. Nothing changes until you change the tag</td></tr>
-          <tr><td>1.5</td><td>newest 1.5.x</td><td>Picking up fixes automatically on the next pull</td></tr>
+          <tr><td>1.6.0</td><td>this release</td><td>Servers. Nothing changes until you change the tag</td></tr>
+          <tr><td>1.6</td><td>newest 1.6.x</td><td>Picking up fixes automatically on the next pull</td></tr>
           <tr><td>latest</td><td>newest main build</td><td>Trying the newest changes</td></tr>
           <tr><td>sha-1a2b3c4</td><td>one commit</td><td>Going back to an exact build</td></tr>
         </tbody></table></div>
       <div class="notes">
         <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># pin the tag in docker-compose.yml,</span>
-<span class="c"># e.g. image: …/routeros-acme:1.5.1</span>
+<span class="c"># e.g. image: …/routeros-acme:1.6.0</span>
 docker compose pull
 docker compose up -d
 docker compose logs | head -1
-<span class="c"># RouterOS ACME 1.5.1</span></pre></div>
+<span class="c"># RouterOS ACME 1.6.0</span></pre></div>
         <div class="note"><b>Access for colleagues</b>Add them as collaborators on the GitHub repository. They log in to ghcr.io with their own token; nobody shares yours.</div>
         <div class="note"><b>What changed</b>Every version has release notes on the repository's Releases page. Upgrades keep <code>data/</code> as it is.</div>
       </div>
@@ -485,7 +485,7 @@ docker compose logs | head -1
 </section>
 </main>
 
-<footer><div class="wrap"><span>RouterOS ACME 1.5.1 · MIT License · self-hosted certificate management for MikroTik · inspired by <a href="https://hub.docker.com/r/foorschtbar/routeros-letsencrypt" target="_blank" rel="noopener">foorschtbar/routeros-letsencrypt</a></span><span>Screenshots show demo data, plus a real enrollment on a RouterOS 7.25.1 test VM.</span></div></footer>
+<footer><div class="wrap"><span>RouterOS ACME 1.6.0 · MIT License · self-hosted certificate management for MikroTik · inspired by <a href="https://hub.docker.com/r/foorschtbar/routeros-letsencrypt" target="_blank" rel="noopener">foorschtbar/routeros-letsencrypt</a></span><span>Screenshots show demo data, plus a real enrollment on a RouterOS 7.25.1 test VM.</span></div></footer>
 
 <div class="lb" id="lb" hidden><img alt=""></div>
 

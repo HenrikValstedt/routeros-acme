@@ -250,7 +250,11 @@ func sealedFields(c *Config) []sealedField {
 		{p: &c.Mail.Password, what: "SMTP password"},
 	}
 	for _, a := range c.DNS {
-		fs = append(fs, sealedField{p: &a.Token, what: fmt.Sprintf("DNS account %q token", a.Name)})
+		fs = append(fs, sealedField{p: &a.Token, what: fmt.Sprintf("DNS account %q token", a.Name)},
+			sealedField{p: &a.Secret, what: fmt.Sprintf("DNS account %q credentials", a.Name)})
+		for _, r := range a.ACMEDNS {
+			fs = append(fs, sealedField{p: &r.Password, what: fmt.Sprintf("DNS account %q: acme-dns registration of %s (its CNAME record changes)", a.Name, r.Name)})
+		}
 	}
 	for _, r := range c.Routers {
 		fs = append(fs,

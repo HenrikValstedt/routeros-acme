@@ -8,7 +8,8 @@ and is inspired by that project (see [Credits](#credits)).
 - One small container (a static Go binary in a `scratch` image, about 10 MB) manages **many routers**.
 - **Device enrollment**: an admin login is used once, to set up a restricted service account. After that all
   communication goes over the encrypted RouterOS API (api-ssl) with certificate pinning. No admin credentials are stored.
-- DNS-01 validation through **Cloudflare**, so wildcards work and nothing has to be exposed to the internet.
+- DNS-01 validation through **Cloudflare**, **your own DNS server** (RFC 2136) or **acme-dns** (works with any DNS host),
+  so wildcards work and nothing has to be exposed to the internet.
 - Certificates and routers are configured separately. One cert (e.g. `*.example.com`) can go to several routers and is issued only once.
 - Runs on `linux/amd64`, `linux/arm64` and `linux/arm/v7` (Raspberry Pi etc).
 
@@ -50,9 +51,10 @@ To build from source instead, see [BUILD.md](BUILD.md).
 Open `http://<host>:8080`. On first run you'll be asked for the setup code from the log and for the
 username and password of the first **admin** account. Then:
 
-1. **Settings**: enter your ACME e-mail and turn on *staging* while you test. Under **DNS accounts**, add a Cloudflare
-   API token (*My Profile → API Tokens → Create Token → "Edit zone DNS"* template, i.e. `Zone:Read` + `DNS:Edit`).
-   Add more tokens if your domains are in different Cloudflare accounts, or if you use one token per zone (see below).
+1. **Settings**: enter your ACME e-mail and turn on *staging* while you test. Under **DNS accounts**, add how the app
+   creates DNS records: a Cloudflare API token (*My Profile → API Tokens → Create Token → "Edit zone DNS"* template,
+   i.e. `Zone:Read` + `DNS:Edit`), your own DNS server (RFC 2136), or acme-dns for any other DNS host. Click **Test**
+   to check it (see [DNS accounts](#dns-accounts)).
 2. **Certificates → Add**: list the domain names, one per line (`router.example.com`, `*.example.com`). The dialog
    shows which DNS account will validate each name.
 3. **Devices → Enroll device**: enter the router address and an admin SSH login, confirm the device's
@@ -97,26 +99,64 @@ docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t routeros-
 | `COOKIE_SECURE`  | `false`  | `true` always sets the Secure flag on the session cookie |
 
 All other configuration lives in `/data/config.json` (mode 0600) and is edited through the UI.
-Secrets (Cloudflare tokens, SMTP password, router passwords and keys) are stored encrypted and never sent back to the browser.
+Secrets (DNS credentials, SMTP password, router passwords and keys) are stored encrypted and never sent back to the browser.
 
-## DNS accounts (several Cloudflare tokens)
+## DNS accounts
 
-Let's Encrypt checks domain ownership with a temporary DNS record, so the app needs a Cloudflare API token that can edit
-DNS for each zone. Add them under **Settings → DNS accounts**:
+Let's Encrypt checks domain ownership with a temporary DNS record, so the app needs a way to create TXT records for
+each zone. Add DNS accounts under **Settings → DNS accounts**. Three providers are available, all verified end to end:
 
-- **One account per token.** Use several when your domains live in different Cloudflare accounts, or when you prefer one
-  narrowly scoped token per zone. Cloudflare is the only provider for now; the list is ready for more.
-- **The token is checked when you save it.** The app asks Cloudflare which zones it can manage and lists them, so a
-  wrong or under-privileged token is caught right away. Zone lists are refreshed daily, or with **Refresh**. Adding or
-  changing a token asks for a fresh 2FA code, and tokens are stored encrypted.
+| Provider | For | What you enter |
+|---|---|---|
+| **Cloudflare** | Domains at Cloudflare | An API token (*My Profile → API Tokens*, "Edit zone DNS" template: Zone:Read + DNS:Edit). The app reads its zones from Cloudflare. |
+| **Own DNS server (RFC 2136)** | BIND, PowerDNS, Knot, Technitium, Windows DNS and others you run yourself | The server, a TSIG key (name, algorithm, secret) and the zones |
+| **acme-dns (CNAME)** | **Any DNS host**, also one without an API | An [acme-dns](https://github.com/joohoi/acme-dns) server (your own, or the public `https://auth.acme-dns.io`) and the zones |
+
+How it works for every provider:
+
+- **Test** creates a temporary TXT record, checks that the provider's name servers serve it, and removes it again. So
+  wrong credentials or a missing permission show up right away, not at renewal time. Saving checks the input; adding
+  or changing credentials asks for a fresh 2FA code, and they are stored encrypted.
 - **Certificates pick the account automatically,** by the most specific zone that contains each name. One certificate
   can even mix zones from different accounts, for example `*.example.com` and `example.org`. You can also pin a
   certificate to one account in its dialog, which shows the account for each name as you type.
 - **Names no account covers are refused when you save the certificate,** with the name in the message, instead of
   failing at renewal time.
 - An account used by a pinned certificate can't be deleted until the certificate is changed.
-- **Upgrading from 1.1 or earlier:** the single Cloudflare token from Settings becomes the DNS account "Cloudflare"
-  automatically, and existing certificates keep working.
+
+**Cloudflare.** Use several accounts when your domains live in different Cloudflare accounts, or for one narrowly
+scoped token per zone. The token is checked when you save it, and its zone list is refreshed daily or with **Refresh**.
+Upgrading from 1.1 or earlier: the single token from Settings becomes the DNS account "Cloudflare" automatically.
+
+**Own DNS server (RFC 2136).** The server must be the public, authoritative server for the zones (or their hidden
+primary), because Let's Encrypt checks the records from the internet. Create a TSIG key and allow it to update only
+`_acme-challenge` TXT records, for example with BIND:
+
+```
+tsig-keygen -a hmac-sha256 acme-update        # paste the printed key { … } into named.conf
+zone "example.com" {
+  …
+  update-policy {
+    grant acme-update wildcard *.example.com. TXT;
+    grant acme-update name _acme-challenge.example.com. TXT;
+  };
+};
+```
+
+In the app, enter the server (`ns1.example.com` or an IP, port 53 by default), the key name (`acme-update`), the
+algorithm and the secret, plus the zones (`example.com`).
+
+**acme-dns (CNAME).** For DNS hosts without an API, or when you don't want any DNS credentials in the app:
+
+1. Add an acme-dns account with the server and the zones it is for (e.g. `example.com`).
+2. Add a certificate. The app registers each name with acme-dns and shows one CNAME record per name, in the DNS
+   accounts list and under the certificate, for example
+   `_acme-challenge.router.example.com → 1a2b3c….auth.acme-dns.io`.
+3. Create those CNAME records once at your DNS host, then click **Check CNAMEs** (or **Test**).
+
+Until a name's CNAME exists, the app doesn't ask Let's Encrypt for that certificate, so no failed validations count
+against the rate limits. A wildcard and its base name (`*.example.com` and `example.com`) share one CNAME. After that,
+renewals only talk to the acme-dns server.
 
 ## E-mail: notifications, invitations, password reset
 
@@ -228,7 +268,7 @@ only and trust the Docker range:
 
 The quick start works without any of this. It is for keeping the encryption key out of backups of the data folder.
 
-Stored secrets (Cloudflare tokens, the SMTP password, device service passwords, 2FA secrets) are encrypted. By default the
+Stored secrets (DNS tokens and keys, the SMTP password, device service passwords, 2FA secrets) are encrypted. By default the
 key is `data/secret.key`, right next to `config.json`. A backup or copy of the whole data folder then holds both the lock
 and the key. With `SECRET_KEY_FILE` the key lives outside the data folder, for example as a Docker secret:
 
@@ -307,7 +347,7 @@ passwords.
 ## Two-factor authentication
 
 Every **admin must use two-factor authentication** (TOTP codes from an authenticator app, such as Google or Microsoft
-Authenticator, Authy, 1Password or Bitwarden). Admins control routers, the Cloudflare DNS token and other users, so a
+Authenticator, Authy, 1Password or Bitwarden). Admins control routers, the DNS credentials and other users, so a
 password alone isn't enough.
 
 - **Setup:** right after first-run setup, an invitation, or being made admin, the UI asks you to scan a QR code (or type
@@ -316,7 +356,7 @@ password alone isn't enough.
 - **Signing in:** password, then the 6-digit code (or a recovery code). Each code works only once, and wrong codes are
   rate-limited like wrong passwords.
 - **Sensitive actions ask for a fresh code** ("Confirm it's you"), even when you're signed in: enrolling a device,
-  removing a device with cleanup, adding or changing a Cloudflare token, a new SMTP password, switching off "2FA for everyone", creating or
+  removing a device with cleanup, adding or changing DNS credentials, a new SMTP password, switching off "2FA for everyone", creating or
   promoting an admin, changing another user's password, inviting an admin, deleting a user, resetting someone's 2FA,
   and new recovery codes. A code counts for 5 minutes (`OTP_FRESH_MINUTES`).
 - **Viewers:** 2FA is optional (*My account → Set up two-factor authentication*). Settings has a switch to
@@ -398,7 +438,8 @@ Make sure the container can reach the device's api-ssl port, and its SSH port du
 ## Security notes
 
 - The container serves plain HTTP. Keep it on a trusted network or put it behind a reverse proxy with TLS (see above).
-- Use Cloudflare tokens scoped to just the zones they're for (one DNS account per token).
+- Use Cloudflare tokens scoped to just the zones they're for (one DNS account per token), and TSIG keys that may only
+  update `_acme-challenge` TXT records.
 - The app runs as an unprivileged user with no capabilities, on a read-only root filesystem (see Quick start).
 - The web UI sends a strict Content Security Policy: the browser runs only the app's own script and styles (no inline
   code, nothing from other sites, no framing). Even if text from a router or a DNS provider ever slipped through
@@ -416,6 +457,8 @@ go test ./...          # auth/roles, invite/reset via fake SMTP, notifications, 
 ROS_HOST=127.0.0.1 ROS_SSH_PORT=2222 ROS_API_PORT=8729 ROS_USER=admin ROS_PASS=... go test -run Real -v .
 go run .               # DATA_DIR=./data LISTEN=:8080
 # CLOUDFLARE_API_URL=http://127.0.0.1:9999  points the app at a fake Cloudflare API (testing only)
+# ACME_DIRECTORY_URL=https://pebble:14000/dir with LEGO_CA_CERTIFICATES=/pebble.minica.pem uses a local Pebble
+#   test CA instead of Let's Encrypt (testing only; RFC 2136 and acme-dns were verified this way with BIND and acme-dns)
 ```
 
 ## Credits

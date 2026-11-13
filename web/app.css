@@ -251,6 +251,9 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
 @keyframes sheet{from{transform:translateY(100%)}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 
+.cname{margin-top:4px;overflow-wrap:anywhere}.cname.ok{color:var(--ok)}.cname.warn{color:var(--warn)}
+#dnsTestList{padding-left:18px;overflow-wrap:anywhere}
+
 /* Utility classes in place of inline style="" attributes, which the Content Security Policy blocks.
    !important keeps the precedence an inline style had. */
 .u-abs{position:absolute!important}.u-jsb{justify-content:space-between!important}.u-w100{width:100%!important}

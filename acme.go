@@ -104,6 +104,9 @@ func obtain(dataDir string, st Settings, c Cert, prov challenge.Provider, logf f
 	if st.Staging {
 		cfg.CADirURL = lego.LEDirectoryStaging
 	}
+	if u := os.Getenv("ACME_DIRECTORY_URL"); u != "" {
+		cfg.CADirURL = u // testing only, e.g. a local Pebble server (its CA via LEGO_CA_CERTIFICATES)
+	}
 	kt, ok := keyTypes[st.KeyType]
 	if !ok {
 		kt = certcrypto.RSA2048

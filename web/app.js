@@ -385,7 +385,7 @@ function render() {
       ${hasT(c.notAfter) ? `<button data-act="exportCert" data-id="${c.id}">Export</button>` : ''}
       <button data-act="renewCert" data-id="${c.id}">Renew</button>
       <button data-act="editCert" data-id="${c.id}">Edit</button></div></td></tr>`).join('')
-    : emptyRow(5, 'cert', 'No certificates yet.<div class="small">Add a Cloudflare token under <b>Settings → DNS accounts</b> first, then your first certificate.</div>');
+    : emptyRow(5, 'cert', 'No certificates yet.<div class="small">Add a DNS account under <b>Settings → DNS accounts</b> first, then your first certificate.</div>');
   $('#routerRows').innerHTML = S.routers.length ? S.routers.map(r => {
     const c = S.certs.find(c => c.id === r.certId);
     return `<tr>
@@ -544,7 +544,7 @@ function zoneFor(name, accounts) {
 function certRoutePreview() {
   const f = $('#certForm'), accs = S.dnsAccounts || [], pick = f.dnsAccountId.value;
   const names = f.domains.value.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
-  if (!accs.length) { $('#certRoute').innerHTML = '<span class="warn">No DNS account yet – add a Cloudflare token under Settings → DNS accounts.</span>'; return; }
+  if (!accs.length) { $('#certRoute').innerHTML = '<span class="warn">No DNS account yet – add one under Settings → DNS accounts.</span>'; return; }
   if (!names.length) { $('#certRoute').textContent = ''; return; }
   const unknown = accs.filter(a => !(a.zones || []).length);
   $('#certRoute').innerHTML = names.map(n => {
@@ -560,23 +560,56 @@ function dnsVia(c) {
   if (!r) return '';
   if (r.error) return `<div class="errtxt" title="${esc(r.error)}">${esc(r.error)}</div>`;
   const names = [...new Set((r.routes || []).map(x => (S.dnsAccounts.find(a => a.id === x.accountId) || {}).name).filter(Boolean))];
-  return names.length ? `<div class="muted">via ${names.map(esc).join(', ')}</div>` : '';
+  // acme-dns: CNAME records still to be created at the DNS host
+  const todo = (r.routes || []).flatMap(x => ((S.dnsAccounts.find(a => a.id === x.accountId) || {}).cnames || [])
+    .filter(cn => !cn.ok && cn.name === x.name.replace(/^\*\./, '').toLowerCase()));
+  const need = [...new Map(todo.map(cn => [cn.record, cn])).values()]
+    .map(cn => `<div class="warn">create CNAME <span class="mono">${esc(cn.record)}</span> → <span class="mono">${esc(cn.target)}</span></div>`).join('');
+  return (names.length ? `<div class="muted">via ${names.map(esc).join(', ')}</div>` : '') + need;
 }
+const provDef = id => (S.dnsProviders || []).find(p => p.id === (id || 'cloudflare')) || {fields: []};
 function renderDNS() {
-  const rows = (S.dnsAccounts || []).map(a => `<tr>
-    <td class="main">${esc(a.name)}<div class="sub">Cloudflare</div></td>
-    ${cell('Zones', (a.zones || []).length ? a.zones.map(esc).join('<br>') : '<span class="muted">not checked yet</span>', 'small')}
-    ${cell('Status', a.lastError ? pill('err', 'Error') + `<div class="errtxt" title="${esc(a.lastError)}">${esc(a.lastError)}</div>`
-      : pill('ok', 'Working') + (hasT(a.zonesChecked) ? `<div class="sub">checked ${rel(a.zonesChecked)}</div>` : ''))}
-    <td class="adm acts-cell"><div class="acts"><button data-act="refreshDNS" data-id="${a.id}">Refresh</button><button data-act="editDNS" data-id="${a.id}">Edit</button></div></td></tr>`).join('');
-  $('#dnsRows').innerHTML = rows || emptyRow(4, 'gear', 'No DNS account yet.<div class="small">Add a Cloudflare API token to start issuing certificates.</div>');
+  const rows = (S.dnsAccounts || []).map(a => {
+    const def = provDef(a.provider), cn = a.cnames || [], open = cn.filter(c => !c.ok).length;
+    const zones = (a.zones || []).length ? a.zones.map(esc).join('<br>') : '<span class="muted">not checked yet</span>';
+    const cnames = cn.map(c => `<div class="cname ${c.ok ? 'ok' : 'warn'}">${c.ok ? '✓' : '✗'} <span class="mono">${esc(c.record)}</span> → <span class="mono">${esc(c.target)}</span></div>`).join('');
+    const status = a.lastError ? pill('err', 'Error') + `<div class="errtxt" title="${esc(a.lastError)}">${esc(a.lastError)}</div>`
+      : open ? pill('warn', open === 1 ? 'CNAME needed' : `${open} CNAMEs needed`) + '<div class="sub">create them at your DNS host</div>'
+      : a.provider === 'cloudflare' || !a.provider ? pill('ok', 'Working') + (hasT(a.zonesChecked) ? `<div class="sub">checked ${rel(a.zonesChecked)}</div>` : '')
+      : pill('ok', 'Ready') + '<div class="sub">use Test to check it</div>';
+    const refreshBtn = def.autoZones ? `<button data-act="refreshDNS" data-id="${a.id}">Refresh</button>`
+      : a.provider === 'acmedns' ? `<button data-act="refreshDNS" data-id="${a.id}">Check CNAMEs</button>` : '';
+    return `<tr>
+    <td class="main">${esc(a.name)}<div class="sub">${esc(def.name || a.provider)}</div></td>
+    ${cell('Zones', zones + cnames, 'small')}
+    ${cell('Status', status)}
+    <td class="adm acts-cell"><div class="acts"><button data-act="testDNS" data-id="${a.id}">Test</button>${refreshBtn}<button data-act="editDNS" data-id="${a.id}">Edit</button></div></td></tr>`;
+  }).join('');
+  $('#dnsRows').innerHTML = rows || emptyRow(4, 'gear', 'No DNS account yet.<div class="small">Add one to start issuing certificates.</div>');
+}
+function dnsFields(provider, a) {
+  const def = provDef(provider), f = $('#dnsForm'), editing = !!a.id;
+  $('#dnsHelp').innerHTML = def.help || '';   // static text from the server's provider list
+  $('#dnsZonesBox').hidden = !!def.autoZones; f.zones.required = !def.autoZones;
+  $('#dnsFields').innerHTML = def.fields.map(x => {
+    const id = 'dnsF-' + x.key, val = x.secret ? '' : esc((a.config || {})[x.key] ?? x.default ?? '');
+    const kept = x.secret && editing && (a.hasToken || a.hasSecret);
+    const input = x.options
+      ? `<select id="${id}" data-key="${x.key}">${x.options.map(o => `<option${o === ((a.config || {})[x.key] || x.default) ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+      : `<input id="${id}" data-key="${x.key}" ${x.secret ? 'data-secret="1" type="password" autocomplete="new-password"' : 'type="text"'} value="${val}"
+          placeholder="${esc(kept ? 'saved – leave empty to keep' : x.placeholder || '')}"${x.required && !kept ? ' required' : ''} spellcheck="false">`;
+    return `<label for="${id}">${esc(x.label)}</label>${input}${x.hint ? `<div class="hint">${esc(x.hint)}</div>` : ''}`;
+  }).join('');
 }
 function editDNS(id) {
   const a = (S.dnsAccounts || []).find(x => x.id === id) || {}, f = $('#dnsForm');
-  $('#dnsTitle').textContent = id ? 'Edit DNS account' : 'Add Cloudflare token';
-  f.id.value = a.id || ''; f.name.value = a.name || ''; f.token.value = '';
-  f.token.required = !id;
-  $('#dnsTokenHint').textContent = id ? 'Saved – leave empty to keep the current token.' : '';
+  $('#dnsTitle').textContent = id ? 'Edit DNS account' : 'Add DNS account';
+  f.id.value = a.id || ''; f.name.value = a.name || '';
+  f.provider.innerHTML = (S.dnsProviders || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  f.provider.value = a.provider || 'cloudflare'; f.provider.disabled = !!id;
+  f.zones.value = (a.zones || []).join('\n');
+  dnsFields(f.provider.value, a);
+  f.provider.onchange = () => dnsFields(f.provider.value, {});
   $('#dnsDel').hidden = !id;
   $('#dnsDel').onclick = async () => {
     if (confirm(`Delete DNS account "${a.name}"?`) && await act('DELETE', '/api/dns-accounts/' + id, 'DNS account deleted')) dnsDlg.close();
@@ -585,17 +618,35 @@ function editDNS(id) {
 }
 $('#dnsForm').onsubmit = async e => {
   e.preventDefault(); const f = e.target, btn = f.querySelector('button.pri');
+  const body = {id: f.id.value, name: f.name.value, provider: f.provider.value, config: {}, secrets: {}, zones: f.zones.value.split('\n')};
+  f.querySelectorAll('#dnsFields [data-key]').forEach(el => (el.dataset.secret ? body.secrets : body.config)[el.dataset.key] = el.value);
   btn.disabled = true; btn.textContent = 'Checking…';
   try {
-    const r = await api('POST', '/api/dns-accounts', {id: f.id.value, name: f.name.value, token: f.token.value});
-    toast(r.zones?.length ? `Saved – this token manages ${r.zones.join(', ')}` : 'Saved');
+    const r = await api('POST', '/api/dns-accounts', body);
+    if (r.warning) toast('Saved, but: ' + r.warning, true);
+    else toast(body.provider === 'cloudflare' && r.zones?.length ? `Saved – this token manages ${r.zones.join(', ')}` : 'Saved – use Test to check it');
     dnsDlg.close(); refresh();
   } catch (err) { toast(err.message, true); }
   finally { btn.disabled = false; btn.textContent = 'Save'; }
 };
 async function refreshDNS(id) {
-  try { const z = await api('POST', `/api/dns-accounts/${id}/refresh`); toast('Zones: ' + (z.join(', ') || 'none')); refresh(); }
-  catch (e) { toast(e.message, true); refresh(); }
+  try {
+    const z = await api('POST', `/api/dns-accounts/${id}/refresh`);
+    const a = S.dnsAccounts.find(x => x.id === id);
+    toast(a?.provider === 'acmedns' ? 'CNAME records checked' : 'Zones: ' + (z.join(', ') || 'none')); refresh();
+  } catch (e) { toast(e.message, true); refresh(); }
+}
+async function testDNS(id, btn) {
+  const a = S.dnsAccounts.find(x => x.id === id);
+  if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+  try {
+    const r = await api('POST', `/api/dns-accounts/${id}/test`);
+    $('#dnsTestTitle').textContent = (r.ok ? '✓ ' : '✗ ') + 'Test of ' + a.name;
+    $('#dnsTestMsg').textContent = r.message;
+    $('#dnsTestList').innerHTML = (r.details || []).map(d => `<li>${esc(d)}</li>`).join('');
+    dnsTestDlg.showModal(); refresh();
+  } catch (e) { toast(e.message, true); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Test'; } }
 }
 function delCert(id) {
   const c = S.certs.find(c => c.id === id);
@@ -807,6 +858,7 @@ const actions = {
   renewCert: el => act('POST', `/api/certs/${el.dataset.id}/issue`, 'Renewal started'),
   editDNS: el => editDNS(el.dataset.id),
   refreshDNS: el => refreshDNS(el.dataset.id),
+  testDNS: el => testDNS(el.dataset.id, el),
   testMail: () => testMail(),
   enrollWizard: el => enrollWizard(el.dataset.id),
   enrBack: () => enrStep(enrCur - 1),

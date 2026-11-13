@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/go-acme/lego/v4/challenge"
 )
 
 type logLine struct {
@@ -193,7 +195,12 @@ func (m *Manager) issue(id string) {
 		return
 	}
 	var leaf *x509.Certificate
-	prov, routes, err := dnsProviderFor(cfg, *c, m.sealer) // tokens decrypted only for this request
+	err := m.acmeDNSReady(*c) // acme-dns: registered and CNAMEs in place, before asking Let's Encrypt
+	var prov challenge.Provider
+	var routes []dnsRoute
+	if err == nil {
+		prov, routes, err = dnsProviderFor(m.store.Snapshot(), *c, m.sealer) // credentials decrypted only for this request
+	}
 	if err == nil {
 		var via []string
 		for _, r := range routes {

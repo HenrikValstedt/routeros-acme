@@ -394,6 +394,7 @@ func (a *app) routes() http.Handler {
 	adm("PUT /api/mail", a.putMail)
 	adm("POST /api/dns-accounts", a.saveDNSAccount)
 	adm("POST /api/dns-accounts/{id}/refresh", a.refreshDNSAccount)
+	adm("POST /api/dns-accounts/{id}/test", a.testDNSAccount)
 	adm("DELETE /api/dns-accounts/{id}", a.deleteDNSAccount)
 	adm("POST /api/mail/test", a.testMail)
 
@@ -496,7 +497,7 @@ func (a *app) getState(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"security": security, "settings": sv, "certs": cfg.Certs, "routers": routers, "mail": mailViewOf(cfg.Mail),
-		"dnsAccounts": dnsViews(cfg), "dnsRoutes": certRoutes(cfg),
+		"dnsAccounts": dnsViews(cfg), "dnsRoutes": certRoutes(cfg), "dnsProviders": dnsProviders,
 		"busy": a.mgr.Busy(), "now": time.Now(), "me": viewOf(currentUser(r)), "version": version,
 		"myPasskeys": passkeyViews(currentUser(r)), "proxyHint": a.proxy.proxyHint(r),
 	})
@@ -607,6 +608,7 @@ func (a *app) saveCert(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
+	go a.mgr.syncAllACMEDNS() // new names behind acme-dns get registered, so their CNAMEs can be shown
 	a.mgr.Trigger()
 	writeJSON(w, "ok")
 }

@@ -28,7 +28,7 @@ missing=""
 while read -r path ver dir; do
 	[ -n "$path" ] || continue
 	lic=""
-	for f in "$dir"/LICENSE* "$dir"/LICENCE* "$dir"/COPYING*; do
+	for f in "$dir"/LICENSE* "$dir"/LICENCE* "$dir"/License* "$dir"/license* "$dir"/COPYING*; do
 		if [ -f "$f" ]; then
 			lic=$f
 			break

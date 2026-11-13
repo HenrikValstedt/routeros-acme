@@ -62,13 +62,16 @@ type Token struct {
 // DNSAccount is a set of DNS credentials used for DNS-01 validation, e.g. one Cloudflare API token.
 // Several accounts let certificates use different tokens per zone (or per Cloudflare account).
 type DNSAccount struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Provider     string    `json:"provider"`        // "cloudflare" (more can be added later)
-	Token        string    `json:"token,omitempty"` // sealed
-	Zones        []string  `json:"zones"`           // zones the token can manage, as reported by the provider
-	ZonesChecked time.Time `json:"zonesChecked,omitzero"`
-	LastError    string    `json:"lastError,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Provider     string            `json:"provider"`          // cloudflare | rfc2136 | acmedns (see dnsProviders)
+	Token        string            `json:"token,omitempty"`   // Cloudflare API token, sealed
+	Config       map[string]string `json:"config,omitempty"`  // other providers: settings that aren't secret
+	Secret       string            `json:"secret,omitempty"`  // other providers: secret settings as JSON, sealed
+	ACMEDNS      []*acmeDNSReg     `json:"acmeDns,omitempty"` // acme-dns: one registration per certificate name
+	Zones        []string          `json:"zones"`             // zones this account validates: from Cloudflare, or typed in
+	ZonesChecked time.Time         `json:"zonesChecked,omitzero"`
+	LastError    string            `json:"lastError,omitempty"`
 }
 
 // Cert is one ACME certificate (may contain several names / a wildcard).

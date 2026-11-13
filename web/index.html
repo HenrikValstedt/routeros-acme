@@ -120,7 +120,7 @@
 <main>
   <section id="t-certs">
     <div class="stats" id="stats"></div>
-    <div class="ph"><div><h2>Certificates</h2><p>Let's Encrypt certificates, validated through Cloudflare DNS.</p></div>
+    <div class="ph"><div><h2>Certificates</h2><p>Let's Encrypt certificates, validated through DNS.</p></div>
       <button class="pri adm" data-act="editCert"><svg class="i"><use href="#i-plus"/></svg>Add certificate</button></div>
     <div class="card flush"><div class="tw"><table class="rt"><thead><tr><th>Name</th><th>Domains</th><th>Expires</th><th>Status</th><th class="adm"></th></tr></thead><tbody id="certRows"></tbody></table></div></div>
   </section>
@@ -147,8 +147,8 @@
     </fieldset></form>
     <div class="card flush" id="dnsCard">
       <div class="row u-card-head"><h2>DNS accounts</h2>
-        <button type="button" class="adm" data-act="editDNS"><svg class="i"><use href="#i-plus"/></svg>Add Cloudflare token</button></div>
-      <div class="hint u-card-hint">Each certificate is validated with the account whose zones contain its names. Add one token per Cloudflare account, or per zone.</div>
+        <button type="button" class="adm" data-act="editDNS"><svg class="i"><use href="#i-plus"/></svg>Add DNS account</button></div>
+      <div class="hint u-card-hint">Each certificate is validated with the account whose zones contain its names: a Cloudflare token, your own DNS server (RFC 2136), or acme-dns, which works with any DNS host.</div>
       <div class="tw"><table class="rt"><thead><tr><th>Name</th><th>Zones</th><th>Status</th><th class="adm"></th></tr></thead><tbody id="dnsRows"></tbody></table></div>
     </div>
     <form class="card" id="mailForm"><fieldset id="mailFs">
@@ -203,13 +203,20 @@
 <dialog id="dnsDlg" class="sm"><form method="dialog" id="dnsForm">
   <h3 id="dnsTitle">DNS account</h3>
   <input type="hidden" name="id">
+  <label for="dnsProvider">Provider</label><select id="dnsProvider" name="provider"></select>
+  <div class="info small" id="dnsHelp"></div>
   <label for="dnsName">Name</label><input type="text" id="dnsName" name="name" maxlength="60" placeholder="defaults to the first zone">
-  <label for="dnsProvider">Provider</label><select id="dnsProvider" name="provider" disabled><option value="cloudflare">Cloudflare</option></select>
-  <label for="dnsToken">API token</label><input type="password" id="dnsToken" name="token" autocomplete="off">
-  <div class="hint" id="dnsTokenHint"></div>
-  <div class="info small">In Cloudflare: <b>My Profile → API Tokens → Create Token</b>, use the <b>Edit zone DNS</b> template
-    (Zone:Read and DNS:Edit) and limit <b>Zone Resources</b> to the zones this token is for. The app checks the token and lists its zones when you save.</div>
+  <div id="dnsFields"></div>
+  <div id="dnsZonesBox"><label for="dnsZones">Zones</label><textarea id="dnsZones" name="zones" placeholder="example.com&#10;example.se"></textarea>
+    <div class="hint">The domains this account validates, one per line. Their subdomains are included.</div></div>
   <div class="foot"><button type="button" class="del u-mr-auto" id="dnsDel">Delete</button><button type="button" data-act="closeDialog">Cancel</button><button class="pri" value="save">Save</button></div>
+</form></dialog>
+
+<dialog id="dnsTestDlg" class="sm"><form method="dialog">
+  <h3 id="dnsTestTitle">Test</h3>
+  <p id="dnsTestMsg"></p>
+  <ul class="small mono" id="dnsTestList"></ul>
+  <div class="foot"><button class="pri" value="close">Close</button></div>
 </form></dialog>
 
 <dialog id="certDlg"><form method="dialog" id="certForm">
