@@ -113,9 +113,8 @@ The workflow runs `go vet` and `go test` first. Pull requests are built but not 
 
 **Release a version:** `git tag v1.0.0 && git push origin v1.0.0`.
 
-**Access:** the Dockerfile's `org.opencontainers.image.source` label links the package to the repository, so it is
-private and readable by everyone with read access to the repository. To pull, log in with a GitHub token that has
-`read:packages`: `docker login ghcr.io -u <user>`.
+**Access:** the Dockerfile's `org.opencontainers.image.source` label links the package to the repository.
+The package is public, so anyone can pull it without logging in.
 
 **Push from your own machine** (needs a token with `write:packages`; with the GitHub CLI:
 `gh auth refresh -s write:packages`):
