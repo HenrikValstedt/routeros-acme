@@ -182,7 +182,7 @@ func (m *Manager) deployOutdated() {
 			return
 		}
 		c := cfg.cert(r.CertID)
-		if r.Enabled && r.enrolled() && c != nil && c.Fingerprint != "" && r.DeployedFP != c.Fingerprint {
+		if r.Enabled && r.enrolled() && c != nil && c.Fingerprint != "" && (r.DeployedFP != c.Fingerprint || r.ChainFP != c.Fingerprint) {
 			m.deploy(r.ID)
 		}
 	}
@@ -325,6 +325,9 @@ func (m *Manager) deploy(id string) {
 			})
 		})
 		api.Close()
+		if err == nil {
+			err = checkServedChain(*r, *c, chain, m.logf)
+		}
 	}
 	_ = m.store.Update(func(cf *Config) error {
 		x := cf.router(id)
@@ -340,7 +343,7 @@ func (m *Manager) deploy(id string) {
 		}
 		x.LastError = ""
 		x.LastDeploy = time.Now()
-		x.DeployedFP = c.Fingerprint
+		x.DeployedFP, x.ChainFP = c.Fingerprint, c.Fingerprint
 		return nil
 	})
 	if err != nil {

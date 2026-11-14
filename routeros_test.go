@@ -83,19 +83,44 @@ func TestLegacyCredentialsWiped(t *testing.T) {
 
 // testChain makes a CA + leaf chain like Let's Encrypt would deliver (leaf first).
 func testChain(t *testing.T, cn string) (chain, key []byte, fp string) {
-	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	caTpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Test CA"}, IsCA: true, BasicConstraintsValid: true,
+	return newTestIssuer(t).chain(cn)
+}
+
+// testIssuer is a root CA with an intermediate, like Let's Encrypt. Chains contain the
+// leaf and the intermediate; several leaves from one issuer share the intermediate.
+type testIssuer struct {
+	inter    *x509.Certificate
+	interKey *ecdsa.PrivateKey
+}
+
+func newTestIssuer(t *testing.T) *testIssuer {
+	t.Helper()
+	rootKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	sn, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
+	rootTpl := &x509.Certificate{SerialNumber: sn, Subject: pkix.Name{CommonName: "Test Root " + sn.String()}, IsCA: true, BasicConstraintsValid: true,
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour), KeyUsage: x509.KeyUsageCertSign}
-	caDER, _ := x509.CreateCertificate(rand.Reader, caTpl, caTpl, &caKey.PublicKey, caKey)
-	ca, _ := x509.ParseCertificate(caDER)
+	rootDER, _ := x509.CreateCertificate(rand.Reader, rootTpl, rootTpl, &rootKey.PublicKey, rootKey)
+	root, _ := x509.ParseCertificate(rootDER)
+	ik, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	interTpl := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "Test Intermediate " + sn.String()}, IsCA: true, BasicConstraintsValid: true,
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour), KeyUsage: x509.KeyUsageCertSign}
+	interDER, err := x509.CreateCertificate(rand.Reader, interTpl, root, &ik.PublicKey, rootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inter, _ := x509.ParseCertificate(interDER)
+	return &testIssuer{inter, ik}
+}
+
+func (ti *testIssuer) chain(cn string) (chain, key []byte, fp string) {
 	lk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	sn, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
 	lTpl := &x509.Certificate{SerialNumber: sn, Subject: pkix.Name{CommonName: cn}, DNSNames: []string{cn},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	lDER, _ := x509.CreateCertificate(rand.Reader, lTpl, ca, &lk.PublicKey, caKey)
+	lDER, _ := x509.CreateCertificate(rand.Reader, lTpl, ti.inter, &lk.PublicKey, ti.interKey)
 	kDER, _ := x509.MarshalECPrivateKey(lk)
-	chain = append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: lDER}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})...)
+	chain = append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: lDER}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ti.inter.Raw})...)
 	return chain, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kDER}), certFingerprint(lDER)
 }
 
@@ -159,8 +184,15 @@ func TestRealRouterOS(t *testing.T) {
 	store := func(fp string) error { dev.Pins = uniq(append(dev.Pins, fp)); return nil }
 	var lastFP string
 	var deployedKeys [][]byte
-	for i, cn := range []string{"one.example.test", "two.example.test"} {
-		chain, key, fp := testChain(t, cn)
+	// one and two come from the same CA (a renewal: RouterOS reuses the intermediate from
+	// the first set), three from another CA (the first intermediate can go).
+	caA, caB := newTestIssuer(t), newTestIssuer(t)
+	for i, step := range []struct {
+		cn string
+		ca *testIssuer
+	}{{"one.example.test", caA}, {"two.example.test", caA}, {"three.example.test", caB}} {
+		cn := step.cn
+		chain, key, fp := step.ca.chain(cn)
 		deployedKeys = append(deployedKeys, key)
 		cert := Cert{ID: "c1", Name: cn, Fingerprint: fp}
 		c, _, _, err := connectDevice(dev, sl)
@@ -174,7 +206,44 @@ func TestRealRouterOS(t *testing.T) {
 		if err := deployAPI(c, dev, cert, chain, key, t.Logf, store); err != nil {
 			t.Fatalf("re-deploy %d: %v", i, err)
 		}
-		c.Close()
+		c.Close() // api-ssl keeps its TLS setup while a connection is open
+		interFP := certFingerprint(step.ca.inter.Raw)
+		checkServed := func(when string) {
+			t.Helper()
+			if err := checkServedChain(dev, cert, chain, t.Logf); err != nil {
+				t.Fatalf("deploy %d (%s): %v", i, when, err)
+			}
+			if served, err := servedChain(host, apiPort, fp); err != nil || !served[interFP] {
+				t.Fatalf("deploy %d (%s): api-ssl must serve the intermediate: %v %v", i, when, served, err)
+			}
+		}
+		checkServed("deployed")
+		if i == 1 {
+			// what earlier versions did on a renewal: the reused intermediate gets removed.
+			// A deploy of the same certificate must notice it and import the chain again.
+			rc, err := dialSSH(admin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = rc.run(`/certificate remove [find where fingerprint="` + interFP + `"]`)
+			rc.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := checkServedChain(dev, cert, chain, t.Logf); err == nil || !strings.Contains(err.Error(), "incomplete chain") {
+				t.Fatalf("the check must notice the missing intermediate: %v", err)
+			}
+			c, _, _, err := connectDevice(dev, sl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = deployAPI(c, dev, cert, chain, key, t.Logf, store)
+			c.Close()
+			if err != nil {
+				t.Fatalf("repair deploy %d: %v", i, err)
+			}
+			checkServed("repaired")
+		}
 		lastFP = fp
 	}
 
@@ -233,6 +302,10 @@ func TestRealRouterOS(t *testing.T) {
 		}
 	}
 	t.Logf("certificates from this cert on the device: %v", mine)
+	have, _ := deviceFingerprints(c)
+	if have[certFingerprint(caA.inter.Raw)] || !have[certFingerprint(caB.inter.Raw)] {
+		t.Fatalf("after the CA change the old intermediate must be gone and the new one present: %v", mine)
+	}
 	if len(mine) == 0 || len(mine) > 2 { // leaf + its CA
 		t.Fatalf("old certificates not cleaned up: %v", mine)
 	}

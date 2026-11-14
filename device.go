@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -423,6 +424,8 @@ func deployAPI(c *apiClient, r Router, cert Cert, chain, key []byte, logf func(s
 	prefix := "le-" + cert.ID + "-"
 	// timestamp + fingerprint prefix: unique even for two deploys within the same second
 	base := prefix + time.Now().UTC().Format("20060102T150405") + "-" + cert.Fingerprint[:8]
+	chainFPs := chainFingerprints(chain)
+	defer removeFiles(c, base)
 
 	rows, err := c.run("/certificate/print", "?fingerprint="+cert.Fingerprint, "=.proplist=.id,name,private-key")
 	if err != nil {
@@ -432,8 +435,19 @@ func deployAPI(c *apiClient, r Router, cert Cert, chain, key []byte, logf func(s
 	if len(rows) > 0 {
 		id, name = rows[0][".id"], rows[0]["name"]
 		logf("[%s] certificate already present as %s", r.Name, name)
+		// Earlier versions could delete CA certificates of the chain (see cleanup below).
+		// Importing the chain again restores them, and RouterOS serves the full chain again.
+		have, err := deviceFingerprints(c)
+		if err != nil {
+			return err
+		}
+		if n := countMissing(chainFPs, have); n > 0 {
+			logf("[%s] %d certificate(s) of the chain are missing on the device, importing the chain again", r.Name, n)
+			if err := importFile(c, base+".crt", chain, ""); err != nil {
+				return fmt.Errorf("import chain: %w", err)
+			}
+		}
 	} else {
-		crt, kf := base+".crt", base+".key"
 		// RouterOS writes "/file add" including the file contents to its system log, so
 		// the key is uploaded encrypted with a one-time passphrase. The passphrase is only
 		// sent in the import command (inside TLS), which RouterOS does not log.
@@ -442,17 +456,13 @@ func deployAPI(c *apiClient, r Router, cert Cert, chain, key []byte, logf func(s
 			return err
 		}
 		logf("[%s] uploading certificate over api-ssl (private key encrypted)", r.Name)
-		defer removeFiles(c, base)
-		if _, err := c.run("/file/add", "=name="+crt, "=contents="+string(chain)); err != nil {
-			return fmt.Errorf("upload certificate: %w", err)
-		}
-		if _, err := c.run("/file/add", "=name="+kf, "=contents="+string(encKey)); err != nil {
-			return fmt.Errorf("upload key: %w", err)
-		}
-		if _, err := c.run("/certificate/import", "=file-name="+crt, "=passphrase="); err != nil {
+		// Note: RouterOS skips a certificate whose fingerprint is already in the store and
+		// links the new leaf to the existing copy. A renewal from the same CA therefore
+		// reuses the CA certificates of an earlier deploy; the cleanup below keeps them.
+		if err := importFile(c, base+".crt", chain, ""); err != nil {
 			return fmt.Errorf("import certificate: %w", err)
 		}
-		if _, err := c.run("/certificate/import", "=file-name="+kf, "=passphrase="+pass); err != nil {
+		if err := importFile(c, base+".key", encKey, pass); err != nil {
 			return fmt.Errorf("import key: %w", err)
 		}
 		rows, err := c.run("/certificate/print", "?fingerprint="+cert.Fingerprint, "=.proplist=.id,name,private-key")
@@ -494,15 +504,13 @@ func deployAPI(c *apiClient, r Router, cert Cert, chain, key []byte, logf func(s
 	}
 
 	// remove older certificates this app installed for the same cert
-	all, err := c.run("/certificate/print", "=.proplist=.id,name,fingerprint")
+	keep := map[string]bool{cert.Fingerprint: true}
+	for _, fp := range chainFPs {
+		keep[fp] = true
+	}
+	all, err := c.run("/certificate/print", "=.proplist=.id,name,fingerprint,akid,skid")
 	if err == nil {
-		var old []string
-		for _, x := range all {
-			if strings.HasPrefix(x["name"], prefix) && !strings.HasPrefix(x["name"], name) && x["fingerprint"] != cert.Fingerprint {
-				old = append(old, x[".id"])
-			}
-		}
-		if len(old) > 0 {
+		if old := staleCerts(all, prefix, name, keep); len(old) > 0 {
 			if _, err := c.run("/certificate/remove", "=numbers="+strings.Join(old, ",")); err != nil {
 				logf("[%s] warning: could not remove old certificates: %v", r.Name, err)
 			} else {
@@ -510,7 +518,155 @@ func deployAPI(c *apiClient, r Router, cert Cert, chain, key []byte, logf func(s
 			}
 		}
 	}
+
+	// verify: the whole chain is on the device (checkServedChain checks what api-ssl serves)
+	have, err := deviceFingerprints(c)
+	if err != nil {
+		return err
+	}
+	if n := countMissing(chainFPs, have); n > 0 {
+		return fmt.Errorf("%d certificate(s) of the chain are missing on the device after the deploy, clients may not trust %s", n, name)
+	}
 	return nil
+}
+
+// checkServedChain connects to api-ssl and checks that it presents the deployed certificate
+// with its whole chain. Call it after the deploy's API session is closed: RouterOS keeps the
+// TLS setup of api-ssl (chain included) while any connection is open.
+func checkServedChain(r Router, cert Cert, chain []byte, logf func(string, ...any)) error {
+	if !slices.Contains(r.Services, "api-ssl") {
+		return nil
+	}
+	fps := chainFingerprints(chain)
+	var (
+		served map[string]bool
+		err    error
+	)
+	// RouterOS sets up api-ssl again a moment after the last connection closed
+	for try := 0; try < 8; try++ {
+		if try > 0 {
+			time.Sleep(time.Second)
+		}
+		if served, err = servedChain(r.Host, r.APIPort, cert.Fingerprint); err == nil && countMissing(fps, served) == 0 {
+			break
+		}
+	}
+	switch {
+	case err != nil: // e.g. another client still holds a connection open
+		logf("[%s] could not check the chain api-ssl serves: %v", r.Name, err)
+	case countMissing(fps, served) > 0:
+		return fmt.Errorf("api-ssl serves an incomplete chain (%d of %d certificates), clients may not trust it – deploy again", len(served), len(fps))
+	default:
+		logf("[%s] api-ssl serves the full chain (%d certificates)", r.Name, len(served))
+	}
+	return nil
+}
+
+// importFile uploads data as a file and imports it into the certificate store.
+// The caller removes the file (removeFiles).
+func importFile(c *apiClient, file string, data []byte, pass string) error {
+	if _, err := c.run("/file/add", "=name="+file, "=contents="+string(data)); err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+	_, err := c.run("/certificate/import", "=file-name="+file, "=passphrase="+pass)
+	return err
+}
+
+// chainFingerprints returns the fingerprints of all certificates in a PEM chain, leaf first.
+func chainFingerprints(chain []byte) []string {
+	var fps []string
+	for rest := chain; ; {
+		var blk *pem.Block
+		if blk, rest = pem.Decode(rest); blk == nil {
+			return fps
+		}
+		if blk.Type == "CERTIFICATE" {
+			fps = append(fps, certFingerprint(blk.Bytes))
+		}
+	}
+}
+
+// deviceFingerprints returns the fingerprints of all certificates on the device.
+func deviceFingerprints(c *apiClient) (map[string]bool, error) {
+	rows, err := c.run("/certificate/print", "=.proplist=fingerprint")
+	if err != nil {
+		return nil, fmt.Errorf("list certificates: %w", err)
+	}
+	have := map[string]bool{}
+	for _, x := range rows {
+		have[x["fingerprint"]] = true
+	}
+	return have, nil
+}
+
+func countMissing(fps []string, have map[string]bool) (n int) {
+	for _, fp := range fps {
+		if !have[fp] {
+			n++
+		}
+	}
+	return n
+}
+
+// servedChain connects to api-ssl and returns the fingerprints of the certificates it presents.
+// The leaf must be the deployed certificate.
+func servedChain(host string, port int, leafFP string) (map[string]bool, error) {
+	var served map[string]bool
+	cfg := &tls.Config{
+		InsecureSkipVerify: true, // the leaf is pinned below
+		MinVersion:         tls.VersionTLS12,
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 || certFingerprint(cs.PeerCertificates[0].Raw) != leafFP {
+				return errors.New("api-ssl does not present the deployed certificate")
+			}
+			served = map[string]bool{}
+			for _, x := range cs.PeerCertificates {
+				served[certFingerprint(x.Raw)] = true
+			}
+			return nil
+		},
+	}
+	d := &net.Dialer{Timeout: 15 * time.Second}
+	conn, err := tls.DialWithDialer(d, "tcp", net.JoinHostPort(host, strconv.Itoa(port)), cfg)
+	if err != nil {
+		return nil, err
+	}
+	conn.Close()
+	return served, nil
+}
+
+// staleCerts returns the ids of certificates from earlier deploys of a cert (name starts
+// with prefix) that can go: not the current set, not in keep (the new chain), and no
+// remaining certificate chains to them. RouterOS doesn't import a second copy of a CA
+// certificate it already has, so a leaf of another set, or of another cert, may rely on a
+// CA certificate that was imported with an older set.
+func staleCerts(all []map[string]string, prefix, current string, keep map[string]bool) []string {
+	stale := map[int]bool{}
+	for i, x := range all {
+		if strings.HasPrefix(x["name"], prefix) && !strings.HasPrefix(x["name"], current) && !keep[x["fingerprint"]] {
+			stale[i] = true
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for i := range stale {
+			skid := all[i]["skid"]
+			for j, y := range all {
+				if skid != "" && j != i && !stale[j] && y["akid"] == skid {
+					delete(stale, i)
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	var ids []string
+	for i, x := range all {
+		if stale[i] {
+			ids = append(ids, x[".id"])
+		}
+	}
+	return ids
 }
 
 // encryptKey wraps a PEM private key in OpenSSL-style AES-256 encryption with a random

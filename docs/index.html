@@ -212,7 +212,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
 <section class="hero" id="overview">
   <div class="wrap">
     <div>
-      <div class="eyebrow">Self-hosted · one small container · v1.6.3</div>
+      <div class="eyebrow">Self-hosted · one small container · v1.6.4</div>
       <h1 style="margin-top:12px">Let's Encrypt for your <span>MikroTik routers</span>, without the scripts.</h1>
       <p class="lede">RouterOS ACME issues and renews certificates through DNS validation (Cloudflare, your own DNS server, or acme-dns for any DNS host) and installs them on your routers over the encrypted RouterOS API. You enroll each router once from the web UI. After that it runs by itself.</p>
       <div class="chips">
@@ -430,18 +430,18 @@ docker compose logs | grep "Setup code"
       <div class="tablewrap"><table>
         <thead><tr><th>Tag</th><th>Points to</th><th>Use it for</th></tr></thead>
         <tbody>
-          <tr><td>1.6.3</td><td>this release</td><td>Servers. Nothing changes until you change the tag</td></tr>
+          <tr><td>1.6.4</td><td>this release</td><td>Servers. Nothing changes until you change the tag</td></tr>
           <tr><td>1.6</td><td>newest 1.6.x</td><td>Picking up fixes automatically on the next pull</td></tr>
           <tr><td>latest</td><td>newest main build</td><td>Trying the newest changes</td></tr>
           <tr><td>sha-1a2b3c4</td><td>one commit</td><td>Going back to an exact build</td></tr>
         </tbody></table></div>
       <div class="notes">
         <div class="code"><button class="copy" type="button">Copy</button><pre><span class="c"># pin the tag in docker-compose.yml,</span>
-<span class="c"># e.g. image: …/routeros-acme:1.6.3</span>
+<span class="c"># e.g. image: …/routeros-acme:1.6.4</span>
 docker compose pull
 docker compose up -d
 docker compose logs | head -1
-<span class="c"># RouterOS ACME 1.6.3</span></pre></div>
+<span class="c"># RouterOS ACME 1.6.4</span></pre></div>
         <div class="note"><b>Open source</b>MIT licensed. Source code, issues and feature requests at <a href="https://github.com/HenrikValstedt/routeros-acme" target="_blank" rel="noopener">github.com/HenrikValstedt/routeros-acme</a>. No login needed to pull the image.</div>
         <div class="note"><b>What changed</b>Every version has release notes on the repository's Releases page. Upgrades keep <code>data/</code> as it is.</div>
       </div>
@@ -482,7 +482,7 @@ docker compose logs | head -1
 </section>
 </main>
 
-<footer><div class="wrap"><span>RouterOS ACME 1.6.3 · MIT License · self-hosted certificate management for MikroTik · inspired by <a href="https://hub.docker.com/r/foorschtbar/routeros-letsencrypt" target="_blank" rel="noopener">foorschtbar/routeros-letsencrypt</a></span><span>Screenshots show demo data, plus a real enrollment on a RouterOS 7.25.1 test VM.</span></div></footer>
+<footer><div class="wrap"><span>RouterOS ACME 1.6.4 · MIT License · self-hosted certificate management for MikroTik · inspired by <a href="https://hub.docker.com/r/foorschtbar/routeros-letsencrypt" target="_blank" rel="noopener">foorschtbar/routeros-letsencrypt</a></span><span>Screenshots show demo data, plus a real enrollment on a RouterOS 7.25.1 test VM.</span></div></footer>
 
 <div class="lb" id="lb" hidden><img alt=""></div>
 

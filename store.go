@@ -118,7 +118,10 @@ type Router struct {
 	ExtraCmds string   `json:"extraCommands"` // RouterOS script lines, {{cert}} is replaced
 
 	// status
-	DeployedFP string    `json:"deployedFingerprint,omitempty"`
+	DeployedFP string `json:"deployedFingerprint,omitempty"`
+	// ChainFP is the certificate whose full chain was verified on the device. Before v1.6.4
+	// renewals could delete chain certificates, so devices without it are deployed once more.
+	ChainFP    string    `json:"chainFingerprint,omitempty"`
 	LastDeploy time.Time `json:"lastDeploy,omitzero"`
 	LastSeen   time.Time `json:"lastSeen,omitzero"`
 	LastError  string    `json:"lastError,omitempty"`
