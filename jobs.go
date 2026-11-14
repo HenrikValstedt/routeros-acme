@@ -182,10 +182,78 @@ func (m *Manager) deployOutdated() {
 			return
 		}
 		c := cfg.cert(r.CertID)
-		if r.Enabled && r.enrolled() && c != nil && c.Fingerprint != "" && (r.DeployedFP != c.Fingerprint || r.ChainFP != c.Fingerprint) {
+		if !r.Enabled || !r.enrolled() || c == nil || c.Fingerprint == "" {
+			continue
+		}
+		switch {
+		case r.DeployedFP != c.Fingerprint || r.ChainFP != c.Fingerprint:
 			m.deploy(r.ID)
+		case r.Tidied < tidyVersion:
+			m.tidy(r.ID)
 		}
 	}
+}
+
+// tidyVersion goes up when the cleanup of old certificates on devices learns something
+// new, so that devices are tidied once without a full deploy. 1: sets of deleted or
+// replaced certs (v1.6.5).
+const tidyVersion = 1
+
+// protectedCerts returns the cert ids used by other device entries for the same router:
+// their certificates must stay when this entry cleans up.
+func (c Config) protectedCerts(r *Router) map[string]bool {
+	ids := map[string]bool{}
+	for _, x := range c.Routers {
+		if x.ID != r.ID && x.CertID != r.CertID && strings.EqualFold(x.Host, r.Host) {
+			ids[x.CertID] = true
+		}
+	}
+	return ids
+}
+
+// tidy removes certificates earlier deploys left on the device, without deploying (must
+// run inside a job). Deploys tidy as well.
+func (m *Manager) tidy(id string) {
+	cfg := m.store.Snapshot()
+	r := cfg.router(id)
+	if r == nil {
+		return
+	}
+	c := cfg.cert(r.CertID)
+	if c == nil {
+		return
+	}
+	chain, _, err := loadCertFiles(m.dataDir, c.ID)
+	if err != nil {
+		return
+	}
+	api, _, err := m.session(r)
+	if err != nil {
+		return // offline: next check
+	}
+	defer api.Close()
+	rows, err := api.run("/certificate/print", "?fingerprint="+c.Fingerprint, "=.proplist=name")
+	if err != nil {
+		return
+	}
+	redeploy := len(rows) == 0
+	if !redeploy {
+		if err := tidyCerts(api, *r, *c, chainFingerprints(chain), rows[0]["name"], cfg.protectedCerts(r), m.logf); err != nil {
+			m.logf("[%s] %v – deploying again", r.Name, err)
+			redeploy = true
+		}
+	} else {
+		m.logf("[%s] the deployed certificate is no longer on the device – deploying again", r.Name)
+	}
+	_ = m.store.Update(func(cf *Config) error {
+		if x := cf.router(id); x != nil {
+			x.Tidied = tidyVersion
+			if redeploy {
+				x.DeployedFP = ""
+			}
+		}
+		return nil
+	})
 }
 
 // issue obtains a certificate now (must run inside a job).
@@ -310,7 +378,7 @@ func (m *Manager) deploy(id string) {
 		}
 		m.logf("[%s] deploying %q to %s via api-ssl", r.Name, c.Name, r.Host)
 		version = apiGet(api, "/system/resource", "version")
-		err = deployAPI(api, *r, *c, chain, key, m.logf, func(fp string) error {
+		err = deployAPI(api, *r, *c, chain, key, cfg.protectedCerts(r), m.logf, func(fp string) error {
 			// api-ssl is about to use the new certificate: accept it too. Keep the
 			// enrollment pin and the previous one in case the switch doesn't happen.
 			return m.store.Update(func(cf *Config) error {
@@ -343,7 +411,7 @@ func (m *Manager) deploy(id string) {
 		}
 		x.LastError = ""
 		x.LastDeploy = time.Now()
-		x.DeployedFP, x.ChainFP = c.Fingerprint, c.Fingerprint
+		x.DeployedFP, x.ChainFP, x.Tidied = c.Fingerprint, c.Fingerprint, tidyVersion
 		return nil
 	})
 	if err != nil {

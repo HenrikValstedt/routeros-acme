@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -170,7 +171,8 @@ func TestRealRouterOS(t *testing.T) {
 		if err == nil {
 			rc.run(`/ip service set www-ssl certificate=none disabled=yes`)
 			rc.run(`/ip service set api-ssl certificate=` + apiCertName)
-			rc.run(`/certificate remove [find where name~"^le-c1-"]`)
+			rc.run(`/interface sstp-server server set certificate=none`)
+			rc.run(`/certificate remove [find where name~"^le-"]`)
 			rc.Close()
 		}
 	})
@@ -183,7 +185,28 @@ func TestRealRouterOS(t *testing.T) {
 	// 4. deploy twice over the API (second time replaces the first)
 	store := func(fp string) error { dev.Pins = uniq(append(dev.Pins, fp)); return nil }
 	var lastFP string
+	var lastChain, lastKey []byte
 	var deployedKeys [][]byte
+	// leftovers: a set of a cert that was deleted in the app, and a set of a replaced cert
+	// that the SSTP server still uses. The cleanup must remove the first, keep the second.
+	for _, x := range []struct{ id, extra string }{{"dead0001", ""}, {"c3", `/interface sstp-server server set certificate={{cert}}`}} {
+		chain, key, fp := newTestIssuer(t).chain(x.id + ".example.test")
+		d := dev
+		d.ExtraCmds = x.extra
+		if x.extra != "" {
+			d.Services = nil
+		}
+		c, _, _, err := connectDevice(dev, sl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = deployAPI(c, d, Cert{ID: x.id, Fingerprint: fp}, chain, key, nil, t.Logf, store)
+		c.Close()
+		if err != nil {
+			t.Fatalf("deploy %s: %v", x.id, err)
+		}
+	}
+
 	// one and two come from the same CA (a renewal: RouterOS reuses the intermediate from
 	// the first set), three from another CA (the first intermediate can go).
 	caA, caB := newTestIssuer(t), newTestIssuer(t)
@@ -199,11 +222,11 @@ func TestRealRouterOS(t *testing.T) {
 		if err != nil {
 			t.Fatalf("connect %d: %v", i, err)
 		}
-		if err := deployAPI(c, dev, cert, chain, key, t.Logf, store); err != nil {
+		if err := deployAPI(c, dev, cert, chain, key, nil, t.Logf, store); err != nil {
 			t.Fatalf("deploy %d: %v", i, err)
 		}
 		// idempotent re-deploy of the same cert
-		if err := deployAPI(c, dev, cert, chain, key, t.Logf, store); err != nil {
+		if err := deployAPI(c, dev, cert, chain, key, nil, t.Logf, store); err != nil {
 			t.Fatalf("re-deploy %d: %v", i, err)
 		}
 		c.Close() // api-ssl keeps its TLS setup while a connection is open
@@ -237,14 +260,14 @@ func TestRealRouterOS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = deployAPI(c, dev, cert, chain, key, t.Logf, store)
+			err = deployAPI(c, dev, cert, chain, key, nil, t.Logf, store)
 			c.Close()
 			if err != nil {
 				t.Fatalf("repair deploy %d: %v", i, err)
 			}
 			checkServed("repaired")
 		}
-		lastFP = fp
+		lastFP, lastChain, lastKey = fp, chain, key
 	}
 
 	// 5. api-ssl now serves the deployed certificate, pinned
@@ -302,6 +325,43 @@ func TestRealRouterOS(t *testing.T) {
 		}
 	}
 	t.Logf("certificates from this cert on the device: %v", mine)
+	var dead, sstp int
+	for _, x := range certs {
+		dead += strings.Count(x["name"], "le-dead0001-")
+		sstp += strings.Count(x["name"], "le-c3-")
+	}
+	if dead != 0 || sstp != 2 {
+		t.Fatalf("leftovers: %d of the deleted cert (want 0), %d of the one SSTP uses (want 2)", dead, sstp)
+	}
+	// 5d. the one-time cleanup pass after an upgrade (Manager.tidy, no deploy): a leftover
+	// set of a deleted cert goes, the current one stays, and nothing is redeployed.
+	{
+		chain, key, fp := newTestIssuer(t).chain("dead0002.example.test")
+		d := dev
+		d.Services = nil
+		if err := deployAPI(c, d, Cert{ID: "dead0002", Fingerprint: fp}, chain, key, nil, t.Logf, store); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(mdir, "certs", "c1")
+		_ = os.MkdirAll(dir, 0o700)
+		_ = os.WriteFile(filepath.Join(dir, "fullchain.pem"), lastChain, 0o600)
+		_ = os.WriteFile(filepath.Join(dir, "privkey.pem"), lastKey, 0o600)
+		_ = mst.Update(func(cf *Config) error {
+			cf.Certs = []*Cert{{ID: "c1", Name: "c1", Fingerprint: lastFP}}
+			x := cf.router("r1")
+			x.CertID, x.DeployedFP, x.ChainFP, x.Tidied = "c1", lastFP, lastFP, 0
+			return nil
+		})
+		m.tidy("r1")
+		x := mst.Snapshot().router("r1")
+		if x.Tidied != tidyVersion || x.DeployedFP != lastFP {
+			t.Fatalf("after tidy: tidied %d, deployed %q", x.Tidied, x.DeployedFP)
+		}
+		have, _ := deviceFingerprints(c)
+		if have[fp] || !have[lastFP] {
+			t.Fatalf("tidy: leftover present %v, current present %v", have[fp], have[lastFP])
+		}
+	}
 	have, _ := deviceFingerprints(c)
 	if have[certFingerprint(caA.inter.Raw)] || !have[certFingerprint(caB.inter.Raw)] {
 		t.Fatalf("after the CA change the old intermediate must be gone and the new one present: %v", mine)

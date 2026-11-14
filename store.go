@@ -121,7 +121,9 @@ type Router struct {
 	DeployedFP string `json:"deployedFingerprint,omitempty"`
 	// ChainFP is the certificate whose full chain was verified on the device. Before v1.6.4
 	// renewals could delete chain certificates, so devices without it are deployed once more.
-	ChainFP    string    `json:"chainFingerprint,omitempty"`
+	ChainFP string `json:"chainFingerprint,omitempty"`
+	// Tidied is the cleanup version that last ran on the device (see tidyVersion).
+	Tidied     int       `json:"tidied,omitempty"`
 	LastDeploy time.Time `json:"lastDeploy,omitzero"`
 	LastSeen   time.Time `json:"lastSeen,omitzero"`
 	LastError  string    `json:"lastError,omitempty"`

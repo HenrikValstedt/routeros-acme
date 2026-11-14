@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -420,7 +421,8 @@ func apiGet(c *apiClient, path, prop string) string {
 
 // deployAPI installs the certificate on the device via api-ssl.
 // addPin is called before api-ssl itself is switched to the new certificate.
-func deployAPI(c *apiClient, r Router, cert Cert, chain, key []byte, logf func(string, ...any), addPin func(string) error) error {
+// protect lists cert ids whose certificates must stay (other device entries for the same router).
+func deployAPI(c *apiClient, r Router, cert Cert, chain, key []byte, protect map[string]bool, logf func(string, ...any), addPin func(string) error) error {
 	prefix := "le-" + cert.ID + "-"
 	// timestamp + fingerprint prefix: unique even for two deploys within the same second
 	base := prefix + time.Now().UTC().Format("20060102T150405") + "-" + cert.Fingerprint[:8]
@@ -503,14 +505,21 @@ func deployAPI(c *apiClient, r Router, cert Cert, chain, key []byte, logf func(s
 		logf("[%s] extra commands ran", r.Name)
 	}
 
-	// remove older certificates this app installed for the same cert
+	return tidyCerts(c, r, cert, chainFPs, name, protect, logf)
+}
+
+// tidyCerts removes certificate sets that earlier deploys left on the device (see
+// staleCerts) and checks that the whole chain of the current certificate is there.
+// name is the current certificate's name on the device.
+func tidyCerts(c *apiClient, r Router, cert Cert, chainFPs []string, name string, protect map[string]bool, logf func(string, ...any)) error {
 	keep := map[string]bool{cert.Fingerprint: true}
 	for _, fp := range chainFPs {
 		keep[fp] = true
 	}
 	all, err := c.run("/certificate/print", "=.proplist=.id,name,fingerprint,akid,skid")
 	if err == nil {
-		if old := staleCerts(all, prefix, name, keep); len(old) > 0 {
+		inUse := certsInUse(c)
+		if old := staleCerts(all, cert.ID, name, keep, protect, inUse); len(old) > 0 {
 			if _, err := c.run("/certificate/remove", "=numbers="+strings.Join(old, ",")); err != nil {
 				logf("[%s] warning: could not remove old certificates: %v", r.Name, err)
 			} else {
@@ -528,6 +537,39 @@ func deployAPI(c *apiClient, r Router, cert Cert, chain, key []byte, logf func(s
 		return fmt.Errorf("%d certificate(s) of the chain are missing on the device after the deploy, clients may not trust %s", n, name)
 	}
 	return nil
+}
+
+// places where RouterOS refers to a certificate by name. A menu that doesn't exist on a
+// device (package not installed, older version) is skipped.
+var certRefs = []struct{ menu, props string }{
+	{"/ip/service", "certificate"},
+	{"/interface/sstp-server/server", "certificate"},
+	{"/interface/ovpn-server/server", "certificate"},
+	{"/ip/ipsec/identity", "certificate,remote-certificate"},
+	{"/ip/hotspot/profile", "ssl-certificate"},
+	{"/interface/wifi/capsman", "certificate,ca-certificate"},
+	{"/caps-man/manager", "certificate,ca-certificate"},
+}
+
+// certsInUse returns the names of certificates the device's configuration refers to.
+func certsInUse(c *apiClient) map[string]bool {
+	used := map[string]bool{}
+	for _, ref := range certRefs {
+		rows, err := c.run(ref.menu+"/print", "=.proplist="+ref.props)
+		if err != nil {
+			continue
+		}
+		for _, x := range rows {
+			for _, p := range strings.Split(ref.props, ",") {
+				for _, n := range strings.Split(x[p], ",") {
+					if n = strings.TrimSpace(n); n != "" {
+						used[n] = true
+					}
+				}
+			}
+		}
+	}
+	return used
 }
 
 // checkServedChain connects to api-ssl and checks that it presents the deployed certificate
@@ -635,15 +677,23 @@ func servedChain(host string, port int, leafFP string) (map[string]bool, error) 
 	return served, nil
 }
 
-// staleCerts returns the ids of certificates from earlier deploys of a cert (name starts
-// with prefix) that can go: not the current set, not in keep (the new chain), and no
-// remaining certificate chains to them. RouterOS doesn't import a second copy of a CA
-// certificate it already has, so a leaf of another set, or of another cert, may rely on a
-// CA certificate that was imported with an older set.
-func staleCerts(all []map[string]string, prefix, current string, keep map[string]bool) []string {
+// appCertRE matches the names this app gives certificates: the leaf "le-<cert id>-<time>-<fp>"
+// and the CA certificates imported with it, "<leaf name>.crt_<n>".
+var appCertRE = regexp.MustCompile(`^le-([A-Za-z0-9]+)-[0-9]{8}T[0-9]{6}-[0-9a-f]{8}(\.crt_[0-9]+)?$`)
+
+// staleCerts returns the ids of certificates that earlier deploys left on the device: sets
+// of this cert, and of certs that were deleted or replaced. It keeps the current set
+// (name prefix current), the new chain (keep), sets of the cert ids in protect (another
+// device entry for the same router uses them), everything the configuration refers to
+// (inUse), and every certificate that a remaining one chains to: RouterOS doesn't import a
+// second copy of a CA certificate it already has, so a current leaf may rely on a CA
+// certificate that was imported with an older set.
+func staleCerts(all []map[string]string, certID, current string, keep, protect, inUse map[string]bool) []string {
 	stale := map[int]bool{}
 	for i, x := range all {
-		if strings.HasPrefix(x["name"], prefix) && !strings.HasPrefix(x["name"], current) && !keep[x["fingerprint"]] {
+		m := appCertRE.FindStringSubmatch(x["name"])
+		if m != nil && !strings.HasPrefix(x["name"], current) && !keep[x["fingerprint"]] && !inUse[x["name"]] &&
+			(m[1] == certID || !protect[m[1]]) {
 			stale[i] = true
 		}
 	}
