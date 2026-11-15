@@ -5,6 +5,8 @@ It is a lightweight replacement for running one
 [`foorschtbar/routeros-letsencrypt`](https://hub.docker.com/r/foorschtbar/routeros-letsencrypt) container per router,
 and is inspired by that project (see [Credits](#credits)).
 
+**Website: [routeros-acme.valstedt.com](https://routeros-acme.valstedt.com)** (features, how it works, setup and security, with screenshots).
+
 - One small container (a static Go binary in a `scratch` image, about 17 MB) manages **many routers**.
 - **Device enrollment**: an admin login is used once, to set up a restricted service account. After that all
   communication goes over the encrypted RouterOS API (api-ssl) with certificate pinning. No admin credentials are stored.
@@ -19,7 +21,7 @@ and is inspired by that project (see [Credits](#credits)).
 |---|---|
 | <img src="docs/screenshots/desktop-03-devices.png" width="560"> | <img src="docs/screenshots/phone-03-devices.png" width="200"> |
 
-More in [docs/screenshots](docs/screenshots/README.md). For an illustrated guide (features, flow, setup, security), open `docs/index.html` in a browser.
+More in [docs/screenshots](docs/screenshots/README.md). For an illustrated guide (features, flow, setup, security), see the [website](https://routeros-acme.valstedt.com) or open `docs/index.html` in a browser.
 
 ## Quick start
 
