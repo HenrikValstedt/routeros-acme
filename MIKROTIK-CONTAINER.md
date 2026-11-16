@@ -1,7 +1,7 @@
-# DRAFT — Running routeros-acme on a MikroTik (RouterOS 7 container)
+# Running routeros-acme on a MikroTik (RouterOS 7 container)
 
-> **Status: draft, not published.** Steps marked *tested* ran on RouterOS 7.25.1 on a CHR test router (x86) and on a
-> real RB4011 (arm/v7) and a hAP be³ Media (arm64), all 2026-11-16.
+Steps marked *tested* ran on RouterOS 7.25.1 on a CHR (x86), an RB4011 (arm/v7) and a hAP be³ Media (arm64),
+2026-11-16.
 
 ## Requirements
 - RouterOS 7 on arm, arm64 or x86 (e.g. RB4011, RB5009, CCR2004, hAP ax³, CHR).
@@ -59,7 +59,7 @@ container won't start ("no default dns servers"). Give it the router itself as D
 
 Wait until `/container/print` shows it stopped (download and extract finished), then:
 ```
-/container/start routeros-acme
+/container/start [find name=routeros-acme]
 ```
 
 ## 5. First login — *tested*
@@ -88,7 +88,7 @@ container, so it survives `/container/stop` + `/container/start` and router rebo
 
 ## Removing it
 ```
-/container/stop routeros-acme
+/container/stop [find name=routeros-acme]
 /container/remove [find name=routeros-acme]
 /container/mounts/remove [find list=acme-data]
 /container/envs/remove [find list=acme]

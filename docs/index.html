@@ -116,6 +116,7 @@ figcaption{font-size:13px;color:var(--muted);margin-top:8px;text-align:center}
 .code{position:relative;background:var(--code-bg);color:var(--code-fg);border-radius:12px;font-family:var(--mono);font-size:13.5px;line-height:1.7;min-width:0}
 .code pre{margin:0;padding:16px 18px;overflow-x:auto;white-space:pre}
 .code .c{color:var(--code-dim)}.code .k{color:var(--code-key)}
+.code.ros pre{white-space:normal;padding-right:78px}.code.ros .l{display:block;white-space:pre-wrap;overflow-wrap:anywhere;padding-left:2ch;text-indent:-2ch}
 .copy{position:absolute;top:8px;right:8px;height:30px;padding:0 10px;border-radius:8px;border:1px solid #2a3350;background:#1a2138;color:var(--code-fg);
   font:600 12px var(--font);cursor:pointer}
 .copy:hover{background:#232c49}
@@ -203,7 +204,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
     <a class="brand" href="#overview"><span class="logo"><svg><use href="#i-shield"/></svg></span><span>RouterOS <b>ACME</b></span></a>
     <nav aria-label="Sections">
       <a href="#features">Features</a><a href="#flow">How it works</a><a href="#start">Get started</a>
-      <a href="#security">Security</a><a href="#daily">Day to day</a><a href="#mobile">Mobile</a><a href="#updates">Updates</a><a href="#reference">Reference</a>
+      <a href="#security">Security</a><a href="#daily">Day to day</a><a href="#mobile">Mobile</a><a href="#updates">Updates</a><a href="#routeros">On a MikroTik</a><a href="#reference">Reference</a>
     </nav>
   </div>
 </header>
@@ -298,7 +299,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
 <section class="band" id="start">
   <div class="wrap">
     <div class="head"><div class="eyebrow">Get started</div><h2>Up and running in six steps</h2>
-      <p class="lede">You need Docker with Compose, a domain at Cloudflare, on your own DNS server or at any DNS host (with acme-dns), and a MikroTik router on RouterOS 7.</p></div>
+      <p class="lede">You need Docker with Compose, a domain at Cloudflare, on your own DNS server or at any DNS host (with acme-dns), and a MikroTik router on RouterOS 7. No Docker host? It also runs as a container <a href="#routeros">on the router itself</a>.</p></div>
     <div class="steps">
 
       <div class="step">
@@ -449,7 +450,54 @@ docker compose logs | head -1
   </div>
 </section>
 
-<section id="reference">
+<section id="routeros">
+  <div class="wrap">
+    <div class="head"><div class="eyebrow">On a MikroTik</div><h2>No server? Run it on the router itself</h2>
+      <p class="lede">RouterOS 7 can run containers, and routeros-acme fits easily: about 15 MB of flash and a few MB of RAM. Tested on RouterOS 7.25.1 on an RB4011 (arm), a hAP be³ Media (arm64) and a CHR (x86).</p></div>
+    <div class="steps">
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Install the container package</h3>
+          <p>Or in WebFig: <b>System → Packages → container → Enable → Apply Changes</b>. The router reboots once.</p>
+          <p>If it doesn't reboot, wait a few seconds and run <code>apply-changes</code> again. That happens when the package first has to be downloaded.</p>
+          <p><b>One reboot instead of two:</b> skip <code>apply-changes</code> and go straight to step 2. Its power cut installs the package as well.</p></div>
+        <div class="code ros"><button class="copy" type="button">Copy</button><pre><span class="l">/system/package/enable container</span><span class="l">/system/package/apply-changes</span></pre></div>
+      </div>
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Turn on container mode</h3>
+          <p>RouterOS asks for physical proof that you own the router. Within 5 minutes, <b>pull the power</b> for a few seconds or press the reset button <b>briefly</b>. A reboot from WebFig or WinBox does not count.</p>
+          <p>Some devices already have it, such as the hAP be³ Media. Check with <code>/system/device-mode/print</code> and skip this step if it says <code>container: yes</code>.</p></div>
+        <div class="code ros"><button class="copy" type="button">Copy</button><pre><span class="l">/system/device-mode/update container=yes</span><span class="l"><span class="c"># now pull the power within 5 minutes, then check:</span></span><span class="l"><span class="c"># /system/device-mode/print  →  container: yes</span></span></pre></div>
+      </div>
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Give it a network</h3>
+          <p>A virtual interface on its own small bridge, internet access through NAT, and a port forward to the web UI. Pick a port the router doesn't use and a /30 that isn't used in your network.</p>
+          <p>If the router has a firewall, allow the port from your admin network only.</p></div>
+        <div class="code ros"><button class="copy" type="button">Copy</button><pre><span class="l">/interface/veth/add name=veth-acme address=172.31.255.2/30 gateway=172.31.255.1</span><span class="l">/interface/bridge/add name=containers</span><span class="l">/interface/bridge/port/add bridge=containers interface=veth-acme</span><span class="l">/ip/address/add address=172.31.255.1/30 interface=containers</span><span class="l">/ip/firewall/nat/add chain=srcnat src-address=172.31.255.0/30 action=masquerade comment="routeros-acme: outbound"</span><span class="l">/ip/firewall/nat/add chain=dstnat dst-address=&lt;ROUTER-IP&gt; protocol=tcp dst-port=8080 action=dst-nat to-addresses=172.31.255.2 to-ports=8080 comment="routeros-acme: web UI"</span></pre></div>
+      </div>
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Download and start it</h3>
+          <p>RouterOS pulls the right image for its CPU. Your data lives in the mount <code>containers/routeros-acme-data</code>, so it survives restarts and reboots.</p>
+          <p><code>memory-high</code> caps the app at 256 MB so it can never starve RouterOS.</p>
+          <p><b>DNS over HTTPS only?</b> If <code>/ip/dns/print</code> shows no <code>servers</code>, the container won't start ("no default dns servers"). Add <code>dns=172.31.255.1</code> to it, and make sure the router answers DNS (<code>allow-remote-requests=yes</code>).</p></div>
+        <div class="code ros"><button class="copy" type="button">Copy</button><pre><span class="l">/container/config/set registry-url=https://ghcr.io tmpdir=containers/tmp</span><span class="l">/container/mounts/add list=acme-data src=containers/routeros-acme-data dst=/data</span><span class="l">/container/envs/add list=acme key=TZ value=Europe/Stockholm</span><span class="l">/container/add name=routeros-acme remote-image=henrikvalstedt/routeros-acme:latest interface=veth-acme root-dir=containers/routeros-acme mountlists=acme-data envlists=acme memory-high=268435456 start-on-boot=yes logging=yes</span><span class="l"><span class="c"># wait until /container/print shows it stopped (download done), then:</span></span><span class="l">/container/start [find name=routeros-acme]</span></pre></div>
+      </div>
+
+      <div class="step">
+        <div class="txt"><div class="num"></div><h3>Sign in</h3>
+          <p>The setup code is in the router's log. Open <code>http://&lt;ROUTER-IP&gt;:8080</code> and continue with step 2 of <a href="#start">Get started</a>.</p>
+          <p>Not tested yet: upgrading the image in place, and letting the app manage the router it runs on.</p></div>
+        <div class="code ros"><button class="copy" type="button">Copy</button><pre><span class="l">/log/print where topics~"container"</span><span class="l"><span class="c"># ... running as user 65532</span></span><span class="l"><span class="c"># ... Setup code: m3jnTYG1EUQm</span></span><span class="l"><span class="c"># ... web UI listening on :8080/</span></span></pre></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section class="band" id="reference">
   <div class="wrap">
     <div class="head"><div class="eyebrow">Reference</div><h2>Configuration</h2>
       <p class="lede">Everything else is set in the web UI and stored in <code>data/config.json</code>.</p></div>

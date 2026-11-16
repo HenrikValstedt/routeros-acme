@@ -70,6 +70,13 @@ automatically the first time. You don't need to set a user or change any file pe
 turns on a read-only root filesystem and drops all capabilities except the four needed for that first moment. Use the
 same lines in Portainer stacks. Settings shows how your installation runs at the bottom of the page.
 
+## Running on a MikroTik
+
+No Docker host? RouterOS 7 can run routeros-acme as a container on the router itself. It needs about 15 MB of flash
+and a few MB of RAM, plus physical access to the router once to turn on container mode. Tested on RouterOS 7.25.1 on
+an RB4011 (arm), a hAP be³ Media (arm64) and a CHR (x86). Step-by-step commands are in
+[MIKROTIK-CONTAINER.md](MIKROTIK-CONTAINER.md).
+
 ## Building
 
 See **[BUILD.md](BUILD.md)** for the prerequisites (Docker 23+, buildx, Compose v2; no QEMU needed), build

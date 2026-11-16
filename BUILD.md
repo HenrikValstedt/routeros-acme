@@ -161,7 +161,7 @@ repository's workflow write access.
 - `-reset-2fa` and `-forget-secrets` run as 65532; `user: "1000:1000"` and default Docker capabilities also work;
   `cap_drop: ALL` alone keeps root on old data, or stops with the exact `cap_add` line once the data was handed over.
 
-**Verified on real ARM hardware (2026-11-10):** version 1.1.0, deployed with Portainer on an ARM-based QNAP NAS:
+**Verified on real ARM hardware (2026-11-10):** version 1.1.0, deployed with Portainer on an ARM-based NAS:
 enrolled real MikroTik routers and deployed certificates.
 
 ## 5. Notes for running
