@@ -1,8 +1,7 @@
 # DRAFT — Running routeros-acme on a MikroTik (RouterOS 7 container)
 
-> **Status: draft, not published.** Steps marked *tested* ran on a CHR 7.25.1 test router (x86, 2026-11-16).
-> Still to verify before this goes into the README and the website: real ARM hardware (RB4011 test pending),
-> upgrading the image on the router, and managing the router the app runs on.
+> **Status: draft, not published.** Steps marked *tested* ran on RouterOS 7.25.1 on a CHR test router (x86) and on a
+> real RB4011 (arm/v7) and a hAP be³ Media (arm64), all 2026-11-16.
 
 ## Requirements
 - RouterOS 7 on arm, arm64 or x86 (e.g. RB4011, RB5009, CCR2004, hAP ax³, CHR).
@@ -16,6 +15,11 @@
 /system/package/apply-changes
 ```
 Or in WebFig: **System → Packages → container → Enable → Apply Changes**.
+If the router doesn't reboot, wait a few seconds and run `/system/package/apply-changes` again (seen on a hAP,
+where the package first had to be downloaded).
+
+**Tip — one reboot instead of two** (*tested* on RB4011): run only `/system/package/enable container` (without
+`apply-changes`), then do step 2. Its power cut installs the package as well.
 
 ## 2. Turn on container mode (physical, one reboot) — *tested*
 Check first: `/system/device-mode/print`. If it already says `container: yes`, skip this step. Some devices ship
@@ -46,6 +50,13 @@ firewall, allow the port only from your admin network.
 /container/envs/add list=acme key=TZ value=Europe/Stockholm
 /container/add name=routeros-acme remote-image=henrikvalstedt/routeros-acme:latest interface=veth-acme root-dir=containers/routeros-acme mountlists=acme-data envlists=acme memory-high=268435456 start-on-boot=yes logging=yes
 ```
+**If the router uses only DNS-over-HTTPS** (`/ip/dns/print` shows `servers:` empty and a `use-doh-server`), the
+container won't start ("no default dns servers"). Give it the router itself as DNS server (*tested* on hAP be³):
+```
+/container/set [find name=routeros-acme] dns=172.31.255.1
+```
+(The router must answer DNS: `/ip/dns/set allow-remote-requests=yes`, and its firewall must allow DNS from the container.)
+
 Wait until `/container/print` shows it stopped (download and extract finished), then:
 ```
 /container/start routeros-acme
@@ -57,16 +68,21 @@ Wait until `/container/print` shows it stopped (download and extract finished), 
 ```
 The log shows `Setup code: …`. Open `http://<ROUTER-IP>:8080` and create the admin account.
 
+Your data (accounts, certificates, keys) lives in the mount `containers/routeros-acme-data`, not inside the
+container, so it survives `/container/stop` + `/container/start` and router reboots (*tested*).
+
 ## Notes
 - `latest` follows releases; use a version tag (e.g. `:1.6.5`) to decide upgrades yourself.
 - The image's hardening works on RouterOS too: the app drops to an unprivileged user (*tested*).
 - RouterOS 7.25 syntax: mounts and envs use `list=` (older guides with `name=` fail).
 - After a RouterOS upgrade the container package must match the RouterOS version (the normal upgrade handles it).
 - `memory-high` (256 MiB above) is a soft cap so the app can never starve RouterOS.
+- Measured: about 15 MiB on flash, 2.5–5 MiB RAM, CPU near 0% when idle (RB4011 and hAP be³ Media).
+  `/container/print` may show a too small `container-size` on some devices; check free flash instead.
+- Right after you add the dstnat rule it may show the flag `I` (invalid) for a moment; that clears by itself.
 
 ## Not tested yet
 - **Upgrading the app** to a new image on the router (exact commands to be tried).
-- **Real ARM hardware** (RB4011 test pending).
 - **Managing the router the app runs on:** enroll host `172.31.255.1`; the router's SSH and api-ssl must accept
   connections from `172.31.255.0/30`.
 
