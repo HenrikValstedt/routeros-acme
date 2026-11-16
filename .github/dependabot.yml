@@ -1,16 +1,20 @@
 # Weekly update pull requests for Go modules, the Docker base image and the GitHub Actions.
+# They target the dev branch, so updates are tested there before they reach main.
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule: { interval: weekly }
+    target-branch: dev
     groups:
       go-modules: { patterns: ["*"] }   # one PR for all Go module updates
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    target-branch: dev
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    target-branch: dev
     groups:
       actions: { patterns: ["*"] }

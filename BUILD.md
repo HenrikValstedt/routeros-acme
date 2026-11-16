@@ -102,16 +102,21 @@ file ./routeros-acme-arm64        # ELF 64-bit LSB executable, ARM aarch64
 
 ## 3. Published images (ghcr.io)
 
-Every push to `main` and every `v*.*.*` tag is built and published by GitHub Actions
+Every push to `main` or `dev` and every `v*.*.*` tag is built and published by GitHub Actions
 (`.github/workflows/docker.yml`) to **`ghcr.io/henrikvalstedt/routeros-acme`**, for all three architectures.
 The workflow runs `go vet` and `go test` first. Pull requests are built but not published.
 
 | Event | Tags |
 |---|---|
-| push to `main` | `latest`, `sha-<short>` |
-| tag `v1.2.3` | `1.2.3`, `1.2`, `sha-<short>` |
+| push to `dev` | `dev`, `sha-<short>` |
+| push to `main` | `sha-<short>` |
+| tag `v1.2.3` | `1.2.3`, `1.2`, `latest`, `sha-<short>` |
 
-**Release a version:** `git tag v1.0.0 && git push origin v1.0.0`.
+**Branches:** new work goes to `dev` first. CI publishes it as `:dev`, which runs on a separate test
+install (its own volume, Let's Encrypt staging, test devices only). When it has been tested there, `dev` is
+merged into `main` and tagged; only then do `latest` and the version tags move.
+
+**Release a version:** `git switch main && git merge --ff-only dev && git tag v1.0.0 && git push origin main v1.0.0`.
 
 **Access:** the Dockerfile's `org.opencontainers.image.source` label links the package to the repository.
 The package is public, so anyone can pull it without logging in.

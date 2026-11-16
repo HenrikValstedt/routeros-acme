@@ -38,8 +38,9 @@ docker compose logs | grep "Setup code"   # one-time code for creating the admin
 
 | Tag | What |
 |---|---|
-| `latest` | newest build of `main` |
+| `latest` | newest release |
 | `1.2.3`, `1.2` | releases (git tags `v1.2.3`) |
+| `dev` | test builds of the `dev` branch: untested, don't use in production |
 | `sha-abc1234` | one specific commit |
 
 To build from source instead, see [BUILD.md](BUILD.md).
