@@ -346,12 +346,15 @@ function certStatus(c) {
   return d < 0 ? pill('err', 'Expired') : pill(renewTime(c) <= Date.now() ? 'warn' : 'ok', d + ' days left');
 }
 // same rule as renewTime in acme.go: the time picked in the CA's renewal window (ARI),
-// at the latest 7 days (or renewDays, if fewer) before expiry; without ARI renewDays before expiry
+// at the latest 7 days (or renewDays, if fewer; at most 1/6 of the lifetime) before expiry;
+// without ARI renewDays (at most 1/3 of the lifetime) before expiry
 const hasARI = c => hasT(c.renewAt) && c.ariFor && c.ariFor === c.fingerprint;
 function renewTime(c) {
-  const exp = new Date(c.notAfter).getTime(), days = S.settings.renewDays;
-  if (!hasARI(c)) return exp - days * 864e5;
-  return Math.min(new Date(c.renewAt).getTime(), exp - Math.min(7, days) * 864e5);
+  const exp = new Date(c.notAfter).getTime(), days = S.settings.renewDays * 864e5;
+  const life = hasT(c.notBefore) ? exp - new Date(c.notBefore).getTime() : 0;
+  const atMost = (d, share) => life > 0 ? Math.min(d, life / share) : d;
+  if (!hasARI(c)) return exp - atMost(days, 3);
+  return Math.min(new Date(c.renewAt).getTime(), exp - atMost(Math.min(7 * 864e5, days), 6));
 }
 function renewLine(c) {
   if (!hasT(c.notAfter) || daysLeft(c) < 0) return '';

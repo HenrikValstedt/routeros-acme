@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,6 +55,36 @@ func TestRenewTime(t *testing.T) {
 	}
 }
 
+// Short-lived certificates (e.g. Let's Encrypt's 6-day profile) must not be due, or
+// warned about, right after issue: the fixed rule, the floor and the expiry warning
+// scale with the lifetime.
+func TestShortLivedCert(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	day := 24 * time.Hour
+	c := &Cert{NotBefore: now, NotAfter: now.Add(6 * day), Fingerprint: "fp"}
+	if got := renewTime(c, 30); !got.Equal(now.Add(4 * day)) {
+		t.Fatalf("no ARI: got %v, want a third of the lifetime before expiry", got)
+	}
+	if needsRenewal(c, 30, now.Add(time.Hour)) {
+		t.Fatal("a fresh 6-day certificate must not be due")
+	}
+	c.ARIFor, c.RenewAt = "fp", now.Add(5*day+12*time.Hour) // window after the floor
+	if got := renewTime(c, 30); !got.Equal(now.Add(5 * day)) {
+		t.Fatalf("floor: got %v, want a sixth of the lifetime before expiry", got)
+	}
+	if d := c.atMost(14*day, 6); d != day {
+		t.Fatalf("expiry warning for a 6-day certificate: %v", d)
+	}
+	// a 90-day certificate keeps the plain values
+	c = &Cert{NotBefore: now, NotAfter: now.Add(90 * day), Fingerprint: "fp"}
+	if got := renewTime(c, 30); !got.Equal(now.Add(60 * day)) {
+		t.Fatalf("90 days, no ARI: got %v", got)
+	}
+	if d := c.atMost(14*day, 6); d != 14*day {
+		t.Fatalf("expiry warning for a 90-day certificate: %v", d)
+	}
+}
+
 func TestPickInWindow(t *testing.T) {
 	start := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(48 * time.Hour)
@@ -96,5 +127,34 @@ func TestNextWake(t *testing.T) {
 	}
 	if d := nextWake(cfg, now); d != 3*time.Hour+time.Minute {
 		t.Fatalf("wake at the renewal time: got %v", d)
+	}
+
+	// time to ask the CA again (Retry-After) comes first
+	cfg.Certs[0].ARINext = now.Add(2 * time.Hour)
+	if d := nextWake(cfg, now); d != 2*time.Hour+time.Minute {
+		t.Fatalf("wake to ask the CA again: got %v", d)
+	}
+
+	// a due certificate whose renewal failed: retry after the back-off, not the check interval
+	cfg.Certs[1].LastError, cfg.Certs[1].LastAttempt = "boom", now.Add(-50*time.Minute)
+	if d := nextWake(cfg, now); d != 11*time.Minute {
+		t.Fatalf("wake to retry a failed renewal: got %v", d)
+	}
+	// a failure on a certificate that isn't due (e.g. a manual Renew) doesn't shorten the wait
+	cfg.Certs[1].LastError = ""
+	cfg.Certs[0].LastError, cfg.Certs[0].LastAttempt = "boom", now.Add(-50*time.Minute)
+	if d := nextWake(cfg, now); d != 2*time.Hour+time.Minute {
+		t.Fatalf("failure on a certificate that isn't due: got %v", d)
+	}
+}
+
+func TestEarlyRenewalNotification(t *testing.T) {
+	if !kindEnabled(MailSettings{NotifyIssueFail: true}, evARIEarly) || kindEnabled(MailSettings{}, evARIEarly) {
+		t.Fatal("early-renewal mails follow the 'Renewal failed' checkbox")
+	}
+	subj, body := summarize([]event{{evARIEarly, "cert:1", "lab (a.example): Let's Encrypt asks for renewal"}, {evIssueOK, "cert:1", "lab renewed"}}, "")
+	if !strings.Contains(subj, "⚠") || !strings.Contains(subj, "1 early renewal requested by let's encrypt") ||
+		!strings.Contains(body, "Early renewal requested by Let's Encrypt\n") {
+		t.Fatalf("subject %q\nbody %q", subj, body)
 	}
 }

@@ -84,6 +84,7 @@ type Cert struct {
 	// status, maintained by the app
 	Fingerprint string    `json:"fingerprint,omitempty"`
 	NotAfter    time.Time `json:"notAfter,omitzero"`
+	NotBefore   time.Time `json:"notBefore,omitzero"` // with NotAfter: the lifetime, which scales the renewal rules
 	LastAttempt time.Time `json:"lastAttempt,omitzero"`
 	LastError   string    `json:"lastError,omitempty"`
 

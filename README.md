@@ -59,8 +59,8 @@ username and password of the first **admin** account. Then:
 
 Every *check interval* (default 12h) the app asks Let's Encrypt when each certificate should be renewed
 ([ACME Renewal Information](https://www.rfc-editor.org/rfc/rfc9773.html), ARI) and renews it at a random moment in the suggested
-window, usually about 30 days before expiry. If Let's Encrypt ever revokes a certificate or announces an incident, the window moves
-and the certificate is renewed at once. Renewals are sent as a replacement of the old certificate, which Let's Encrypt exempts from
+window, usually about 30 days before expiry. It asks again as often as Let's Encrypt allows (about every 6 hours). If Let's Encrypt ever revokes a certificate or announces an incident, the window moves,
+the certificate is renewed at once and you get an e-mail. A failed renewal is retried after an hour. Renewals are sent as a replacement of the old certificate, which Let's Encrypt exempts from
 rate limits. When there is no suggestion (another CA, or Let's Encrypt can't be reached), the app renews certificates that have
 fewer than *renew days* (default 30) left, and always at the latest 7 days before expiry. It then pushes them to every enabled router
 that doesn't have the current one. The certificate list shows the planned renewal date.
@@ -186,7 +186,7 @@ the password field left empty, the saved password is used, but only for the same
 Set **Public URL** to the address users open in their browser (e.g. `https://certs.example.com`, including any
 `BASE_PATH`). E-mailed links use it.
 
-**Notifications**: renewal failed, certificate expiring soon (within *warn days*, default 14, which only happens
+**Notifications**: renewal failed or needed early (Let's Encrypt moved the renewal window earlier, usually a sign of a revocation or incident; the renewal itself is automatic), certificate expiring soon (within *warn days*, default 14, which only happens
 when renewal keeps failing), deploy failed, certificate renewed, deployed to router. Each check sends at most
 **one summary e-mail**. The same error for the same certificate or router is sent at most once per 24 hours,
 and a success resets that. Recipients are all users who enabled *Send me notification e-mails* under

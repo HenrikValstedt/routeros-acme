@@ -233,17 +233,29 @@ func (c *Cert) hasARI() bool {
 	return !c.RenewAt.IsZero() && c.ARIFor != "" && c.ARIFor == c.Fingerprint
 }
 
+// atMost caps a "this long before expiry" duration at a share of c's lifetime, so that
+// short-lived certificates (e.g. 6 days) aren't due, or warned about, right after issue.
+// The lifetime is unknown (0) for certificates issued before it was stored.
+func (c *Cert) atMost(d time.Duration, share int) time.Duration {
+	if lt := c.NotAfter.Sub(c.NotBefore); !c.NotBefore.IsZero() && lt > 0 {
+		return min(d, lt/time.Duration(share))
+	}
+	return d
+}
+
 // renewTime is when c is due: the time picked in the CA's renewal window (ARI), or
-// otherwise renewDays before expiry. Zero = not issued yet (due now).
+// otherwise renewDays before expiry (at most a third of the lifetime). Zero = not
+// issued yet (due now).
 func renewTime(c *Cert, renewDays int) time.Time {
 	if c.NotAfter.IsZero() {
 		return time.Time{}
 	}
-	fixed := c.NotAfter.Add(-time.Duration(renewDays) * 24 * time.Hour)
+	days := time.Duration(renewDays) * 24 * time.Hour
+	fixed := c.NotAfter.Add(-c.atMost(days, 3))
 	if !c.hasARI() {
 		return fixed
 	}
-	floor := c.NotAfter.Add(-min(ariFloor, time.Duration(renewDays)*24*time.Hour))
+	floor := c.NotAfter.Add(-c.atMost(min(ariFloor, days), 6))
 	if c.RenewAt.Before(floor) {
 		return c.RenewAt
 	}

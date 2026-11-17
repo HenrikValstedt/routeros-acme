@@ -94,7 +94,7 @@ func TestLabARI(t *testing.T) {
 	leaf, _ := parseLeaf(chain)
 	m.store.Update(func(cf *Config) error {
 		x := cf.cert("c1")
-		x.Fingerprint, x.NotAfter = fingerprint(leaf), leaf.NotAfter
+		x.Fingerprint, x.NotAfter, x.NotBefore = fingerprint(leaf), leaf.NotAfter, leaf.NotBefore
 		return nil
 	})
 	m.refreshARI("c1")
@@ -129,6 +129,13 @@ func TestLabARI(t *testing.T) {
 	}
 	if !hasLog(m, "moved the renewal window earlier") {
 		t.Fatal("the earlier window was not logged")
+	}
+	var notified bool
+	for _, e := range m.events {
+		notified = notified || e.kind == evARIEarly
+	}
+	if !notified {
+		t.Fatal("no early-renewal notification")
 	}
 
 	// 4. a certificate the CA doesn't know: no window, fixed rule

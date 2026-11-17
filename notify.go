@@ -13,6 +13,7 @@ const (
 	evDeployOK   = "deployOk"
 	evDeployFail = "deployFail"
 	evExpiry     = "expiry"
+	evARIEarly   = "ariEarly" // the CA moved the renewal window earlier (revocation, incident)
 )
 
 type event struct {
@@ -48,7 +49,7 @@ func kindEnabled(ms MailSettings, kind string) bool {
 	switch kind {
 	case evIssueOK:
 		return ms.NotifyIssueOK
-	case evIssueFail:
+	case evIssueFail, evARIEarly: // same checkbox: on for everyone who gets failure e-mails
 		return ms.NotifyIssueFail
 	case evDeployOK:
 		return ms.NotifyDeployOK
@@ -135,7 +136,8 @@ func (m *Manager) flushEvents() {
 
 var kindTitle = map[string]string{
 	evIssueFail: "Certificate errors", evExpiry: "Expiring certificates", evDeployFail: "Deploy errors",
-	evIssueOK: "Certificates renewed", evDeployOK: "Deployed to routers",
+	evARIEarly: "Early renewal requested by Let's Encrypt",
+	evIssueOK:  "Certificates renewed", evDeployOK: "Deployed to routers",
 }
 
 func summarize(evs []event, publicURL string) (subject, body string) {
@@ -143,7 +145,7 @@ func summarize(evs []event, publicURL string) (subject, body string) {
 	for _, e := range evs {
 		count[e.kind]++
 	}
-	order := []string{evIssueFail, evDeployFail, evExpiry, evIssueOK, evDeployOK}
+	order := []string{evARIEarly, evIssueFail, evDeployFail, evExpiry, evIssueOK, evDeployOK}
 	var parts []string
 	var b strings.Builder
 	for _, k := range order {
@@ -162,7 +164,7 @@ func summarize(evs []event, publicURL string) (subject, body string) {
 		b.WriteString(strings.Join(lines, "\n") + "\n\n")
 	}
 	prefix := "[RouterOS ACME] "
-	if count[evIssueFail]+count[evDeployFail]+count[evExpiry] > 0 {
+	if count[evIssueFail]+count[evDeployFail]+count[evExpiry]+count[evARIEarly] > 0 {
 		prefix = "[RouterOS ACME] ⚠ "
 	}
 	if publicURL != "" {

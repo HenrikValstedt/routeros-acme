@@ -140,9 +140,9 @@ func (m *Manager) cycle() {
 			continue
 		}
 		// Back off after a failure to stay clear of Let's Encrypt rate limits.
-		if c.LastError != "" && time.Since(c.LastAttempt) < time.Hour {
+		if c.LastError != "" && time.Since(c.LastAttempt) < retryAfterFailure {
 			m.logf("certificate %q failed recently, retrying automatically after %s (or use Renew now)",
-				c.Name, c.LastAttempt.Add(time.Hour).Format(time.TimeOnly))
+				c.Name, c.LastAttempt.Add(retryAfterFailure).Format(time.TimeOnly))
 			continue
 		}
 		m.issue(c.ID)
@@ -161,7 +161,7 @@ func (m *Manager) checkExpiry() {
 			continue
 		}
 		left := time.Until(c.NotAfter)
-		if left < time.Duration(cfg.Mail.WarnDays)*24*time.Hour {
+		if left < c.atMost(time.Duration(cfg.Mail.WarnDays)*24*time.Hour, 6) {
 			days := int(left.Hours() / 24)
 			text := fmt.Sprintf("%s (%s) expires in %d day(s) on %s", c.Name, strings.Join(c.Domains, ", "), days, c.NotAfter.Format(time.DateOnly))
 			if left <= 0 {
@@ -292,7 +292,7 @@ func (m *Manager) issue(id string) {
 			return nil
 		}
 		x.LastError = ""
-		x.NotAfter = leaf.NotAfter
+		x.NotAfter, x.NotBefore = leaf.NotAfter, leaf.NotBefore
 		x.Fingerprint = fingerprint(leaf)
 		return nil
 	})
@@ -363,6 +363,14 @@ func (m *Manager) refreshARI(id string) {
 	if err != nil || fingerprint(leaf) != c.Fingerprint {
 		return
 	}
+	if c.NotBefore.IsZero() { // issued before the lifetime was stored
+		_ = m.store.Update(func(cf *Config) error {
+			if x := cf.cert(id); x != nil && x.Fingerprint == c.Fingerprint {
+				x.NotBefore = leaf.NotBefore
+			}
+			return nil
+		})
+	}
 	ri, err := renewalInfo(m.dataDir, cfg.Settings, leaf)
 	if err != nil {
 		unknown := strings.Contains(err.Error(), "no renewal information")
@@ -389,7 +397,7 @@ func (m *Manager) refreshARI(id string) {
 		retry = ariRetry
 	}
 	retry = max(retry, time.Hour)
-	var msg string
+	var msg, early string
 	_ = m.store.Update(func(cf *Config) error {
 		x := cf.cert(id)
 		if x == nil || x.Fingerprint != c.Fingerprint {
@@ -403,6 +411,8 @@ func (m *Manager) refreshARI(id string) {
 			case earlier:
 				msg = fmt.Sprintf("certificate %q: Let's Encrypt moved the renewal window earlier, to %s – %s; renewing at %s",
 					c.Name, start.Local().Format(time.DateTime), end.Local().Format(time.DateTime), x.RenewAt.Local().Format(time.DateTime))
+				early = fmt.Sprintf("%s (%s): Let's Encrypt asks for renewal by %s, earlier than planned – often a sign of a revocation or incident at the CA. It renews automatically at %s",
+					c.Name, strings.Join(c.Domains, ", "), end.Local().Format(time.DateTime), x.RenewAt.Local().Format(time.DateTime))
 			default:
 				msg = fmt.Sprintf("certificate %q: renewal window from the CA %s – %s, renewing at %s",
 					c.Name, start.Local().Format(time.DateTime), end.Local().Format(time.DateTime), x.RenewAt.Local().Format(time.DateTime))
@@ -420,15 +430,34 @@ func (m *Manager) refreshARI(id string) {
 	if msg != "" {
 		m.logf("%s", msg)
 	}
+	if early != "" {
+		if ri.ExplanationURL != "" {
+			early += ". Details: " + ri.ExplanationURL
+		}
+		m.event(evARIEarly, "cert:"+id, early)
+	}
 }
 
+// retryAfterFailure is how long a failed renewal waits before the next attempt.
+const retryAfterFailure = time.Hour
+
 // nextWake is when the scheduler should run next: after the check interval, or earlier
-// when a certificate's renewal time comes first.
+// when something is due first: a certificate's renewal time, the time to ask the CA for
+// its renewal window again (Retry-After, so a moved window is seen in time), or the
+// retry of a failed renewal.
 func nextWake(cfg Config, now time.Time) time.Duration {
 	d := time.Duration(cfg.Settings.CheckHours) * time.Hour
-	for _, c := range cfg.Certs {
-		if t := renewTime(c, cfg.Settings.RenewDays); !t.IsZero() && t.After(now) {
+	at := func(t time.Time) {
+		if !t.IsZero() && t.After(now) {
 			d = min(d, t.Sub(now)+time.Minute)
+		}
+	}
+	for _, c := range cfg.Certs {
+		t := renewTime(c, cfg.Settings.RenewDays)
+		at(t)
+		at(c.ARINext)
+		if c.LastError != "" && !now.Before(t) { // due but failed: retry after the back-off
+			at(c.LastAttempt.Add(retryAfterFailure))
 		}
 	}
 	return d
