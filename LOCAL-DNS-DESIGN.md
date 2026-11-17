@@ -65,8 +65,9 @@ a clear warning, and only if no other records exist under it.
 
 ## Open questions
 
-- Which routers are DNS servers: pick from enrolled devices (a "DNS server" flag), or a
-  separate list?
+- ~~Which routers are DNS servers?~~ **Decided (2026-11-17):** a separate **DNS servers** tab.
+  There you either point to a device that's already enrolled, or add a new one (the same
+  enrollment, but the device doesn't need a certificate of its own).
 - Several DNS routers: write to all of them, or per device a choice?
 - Address source: chosen interfaces, or fixed addresses typed in, or both?
 - Should the app also offer the record for devices without a certificate (just names)?
