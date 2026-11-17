@@ -63,7 +63,7 @@ records are always exact names (the device's DNS name, chosen at enrollment or o
 device), also when the certificate is a wildcard. A wildcard DNS record is only offered with
 a clear warning, and only if no other records exist under it.
 
-## Open questions
+## Open questions (all answered)
 
 - ~~Which routers are DNS servers?~~ **Decided (2026-11-17):** a separate **DNS servers** tab.
   There you either point to a device that's already enrolled, or add a new one (the same
@@ -80,4 +80,13 @@ a clear warning, and only if no other records exist under it.
   hidden, DHCP addresses marked), and several can be ticked. The choice is stored per
   interface and family, so when the address on that interface changes (e.g. DHCP), the
   record follows.
-- Should the app also offer the record for devices without a certificate (just names)?
+- ~~Devices without a certificate?~~ **Decided (2026-11-17):**
+  - **MikroTik devices:** the suggested DNS name is the device's name (the FQDN it was
+    enrolled with when there is one), always editable. Proposal for a bare name like `sw03`:
+    add the domain of its certificate (`sw03.example.com`).
+  - **Non-MikroTik devices (NAS, printer, server) are in scope, managed manually:** a
+    "manual device" with no enrollment and no deploy. It can have a certificate (issued and
+    renewed as usual, installed by the user through Export) and a DNS record with addresses
+    typed in. The app can't read or follow its addresses, so changes are made by hand. Ties
+    in with the open point "automatic fetching of renewed certificates by other machines",
+    which would remove the manual re-export.
