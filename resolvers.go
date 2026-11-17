@@ -2,8 +2,9 @@ package main
 
 // Resolver check for local DNS records. Some networks write their records to a primary
 // that isn't a resolver itself and copy them to the resolvers on a schedule. For such a
-// DNS server the user lists the resolvers; the app then asks them (plain DNS queries)
-// whether each record arrived. A record that's missing (or a removed address that's still
+// DNS server the user lists the resolvers; the app then checks whether each record
+// arrived: on enrolled MikroTik devices by reading their static DNS list over the API
+// (read only), on other resolvers by asking them over DNS. A record that's missing (or a removed address that's still
 // answered) counts as "copying" for a grace period after the app changed it, and as
 // "late" after that: shown in red and e-mailed.
 
@@ -28,6 +29,8 @@ const (
 	resolverLatePoll = 5 * time.Minute
 )
 
+func (s *DNSServer) hasResolvers() bool { return len(s.Resolvers)+len(s.ResolverDevices) > 0 }
+
 func (s *DNSServer) grace() time.Duration {
 	g := s.Grace
 	if g <= 0 {
@@ -39,7 +42,7 @@ func (s *DNSServer) grace() time.Duration {
 // noteChanges records which names the app just changed on a server: their grace period
 // starts now, and removed addresses must disappear from the resolvers.
 func noteChanges(s *DNSServer, changed []dnsWant, now time.Time) {
-	if len(s.Resolvers) == 0 {
+	if !s.hasResolvers() {
 		s.Since, s.Gone = nil, nil
 		return
 	}
@@ -95,8 +98,12 @@ func resolverExpect(cfg Config, s *DNSServer) map[string]dnsExpect {
 	return exp
 }
 
-// queryFunc asks one resolver for a name's A and AAAA addresses.
-type queryFunc func(resolver, name string) ([]string, error)
+// resolverTarget is one resolver to check: what to call it, and how to get the addresses
+// it has for a name.
+type resolverTarget struct {
+	Label  string
+	Lookup func(name string) ([]string, error)
+}
 
 type resolverReport struct {
 	State  string   // ok | copying | late
@@ -108,7 +115,7 @@ type resolverReport struct {
 }
 
 // checkResolvers compares what each resolver answers with what it should.
-func checkResolvers(s *DNSServer, exp map[string]dnsExpect, query queryFunc, now time.Time) resolverReport {
+func checkResolvers(s *DNSServer, exp map[string]dnsExpect, targets []resolverTarget, now time.Time) resolverReport {
 	rep := resolverReport{State: "ok", Since: map[string]time.Time{}, Gone: map[string][]string{}, Status: map[string]string{}}
 	names := make([]string, 0, len(exp))
 	for n := range exp {
@@ -118,10 +125,11 @@ func checkResolvers(s *DNSServer, exp map[string]dnsExpect, query queryFunc, now
 	for _, name := range names {
 		e := exp[name]
 		var probs []string
-		for _, rv := range s.Resolvers {
-			got, err := query(rv, name)
+		for _, t := range targets {
+			rv := t.Label
+			got, err := t.Lookup(name)
 			if err != nil {
-				probs = append(probs, fmt.Sprintf("%s doesn't answer (%v)", rv, err))
+				probs = append(probs, fmt.Sprintf("%s: %v", rv, err))
 				continue
 			}
 			var missing, stale []string
@@ -177,10 +185,10 @@ func (m *Manager) verifyResolvers() {
 	cfg := m.store.Snapshot()
 	reports := map[string]resolverReport{}
 	for _, s := range cfg.DNSServers {
-		if len(s.Resolvers) == 0 || m.stop() {
+		if !s.hasResolvers() || m.stop() {
 			continue
 		}
-		reports[s.RouterID] = checkResolvers(s, resolverExpect(cfg, s), queryResolver, time.Now())
+		reports[s.RouterID] = checkResolvers(s, resolverExpect(cfg, s), m.resolverTargets(cfg, s), time.Now())
 	}
 	if len(reports) == 0 {
 		return
@@ -234,7 +242,7 @@ func (m *Manager) ResolverWatch() {
 		}
 		due := false
 		for _, s := range m.store.Snapshot().DNSServers {
-			if len(s.Resolvers) == 0 {
+			if !s.hasResolvers() {
 				continue
 			}
 			switch {
@@ -247,6 +255,74 @@ func (m *Manager) ResolverWatch() {
 			m.Go(m.verifyResolvers)
 		}
 	}
+}
+
+// resolverTargets: enrolled devices (static DNS list read once over the API), then the
+// resolvers asked over DNS.
+func (m *Manager) resolverTargets(cfg Config, s *DNSServer) []resolverTarget {
+	var out []resolverTarget
+	for _, id := range s.ResolverDevices {
+		r := cfg.router(id)
+		if r == nil || !r.enrolled() {
+			out = append(out, resolverTarget{id, func(string) ([]string, error) { return nil, errors.New("the device is not enrolled any more") }})
+			continue
+		}
+		recs, err := m.staticRecords(r)
+		if err != nil {
+			err = fmt.Errorf("can't read its DNS records (%v)", err)
+		}
+		out = append(out, resolverTarget{r.Name, func(name string) ([]string, error) {
+			if err != nil {
+				return nil, err
+			}
+			return recs[strings.ToLower(name)], nil
+		}})
+	}
+	return append(out, dnsTargets(s.Resolvers)...)
+}
+
+// dnsTargets: resolvers asked over DNS.
+func dnsTargets(addrs []string) []resolverTarget {
+	var out []resolverTarget
+	for _, rv := range addrs {
+		out = append(out, resolverTarget{rv, func(name string) ([]string, error) {
+			got, err := queryResolver(rv, name)
+			if err != nil {
+				return nil, fmt.Errorf("doesn't answer (%v)", err)
+			}
+			return got, nil
+		}})
+	}
+	return out
+}
+
+// staticRecords reads a device's enabled static A/AAAA records: name -> addresses.
+// Read only: the app never changes a resolver's records.
+func (m *Manager) staticRecords(r *Router) (map[string][]string, error) {
+	api, _, err := m.session(r)
+	if err != nil {
+		return nil, err
+	}
+	defer api.Close()
+	rows, err := api.run("/ip/dns/static/print", "=.proplist=name,type,address,disabled")
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, x := range rows {
+		if x["disabled"] == "true" || (x["type"] != "" && x["type"] != "A" && x["type"] != "AAAA") {
+			continue
+		}
+		a, err := netip.ParseAddr(x["address"])
+		if err != nil {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSuffix(x["name"], "."))
+		if !slices.Contains(out[name], a.String()) {
+			out[name] = append(out[name], a.String())
+		}
+	}
+	return out, nil
 }
 
 // queryResolver asks a resolver directly (not through the system's DNS) for a name's
@@ -306,6 +382,7 @@ func normalizeResolver(s string) (string, error) {
 // updateDNSServer sets a DNS server's resolvers and grace period.
 func (a *app) updateDNSServer(w http.ResponseWriter, r *http.Request) {
 	var in struct {
+		Devices   []string `json:"resolverDevices"`
 		Resolvers []string `json:"resolvers"`
 		Grace     int      `json:"graceMinutes"`
 	}
@@ -327,7 +404,7 @@ func (a *app) updateDNSServer(w http.ResponseWriter, r *http.Request) {
 			res = append(res, n)
 		}
 	}
-	if len(res) > 10 {
+	if len(res)+len(in.Devices) > 10 {
 		fail(w, 400, errors.New("at most 10 resolvers"))
 		return
 	}
@@ -344,9 +421,21 @@ func (a *app) updateDNSServer(w http.ResponseWriter, r *http.Request) {
 		if s == nil {
 			return errors.New("not a DNS server")
 		}
-		s.Resolvers, s.Grace = res, in.Grace
+		var devs []string
+		for _, d := range in.Devices {
+			x := c.router(d)
+			switch {
+			case x == nil || !x.enrolled():
+				return errors.New("a resolver device must be an enrolled MikroTik device")
+			case d == id:
+				return errors.New("a DNS server can't be its own resolver")
+			case !slices.Contains(devs, d):
+				devs = append(devs, d)
+			}
+		}
+		s.ResolverDevices, s.Resolvers, s.Grace = devs, res, in.Grace
 		s.ResolverState, s.ResolverIssues, s.Since, s.Gone = "", nil, nil, nil
-		if len(res) == 0 {
+		if !s.hasResolvers() {
 			for _, x := range c.Routers {
 				if x.DNS != nil {
 					x.DNS.Resolvers = ""

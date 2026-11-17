@@ -746,6 +746,9 @@ func (a *app) deleteRouter(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = a.store.Update(func(c *Config) error {
 		c.Routers = slices.DeleteFunc(c.Routers, func(x *Router) bool { return x.ID == id })
+		for _, s := range c.DNSServers { // no longer a resolver to check
+			s.ResolverDevices = slices.DeleteFunc(s.ResolverDevices, func(d string) bool { return d == id })
+		}
 		return nil
 	})
 	a.mgr.logf("device %q %s by %s", dev.Name, msg, currentUser(r).Username)

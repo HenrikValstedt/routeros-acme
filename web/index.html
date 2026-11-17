@@ -144,8 +144,9 @@
       <ul>
         <li><b>Clients that use their own DNS don't see these records:</b> browsers with "secure DNS" (DNS over HTTPS) turned on,
           some phones, and devices with a fixed DNS server. They get the public answer, or none.</li>
-        <li>If your DNS routers copy records from a primary to the resolvers, add only the primary here. A change then reaches
-          clients within your sync interval plus 5 minutes.</li>
+        <li>If your DNS routers copy records from a primary to the resolvers, add the primary here and list the resolvers under
+          <b>Resolvers</b>: the app then checks that each change arrives within the sync delay you allow. A resolver can also be a
+          DNS server here; the app leaves the copies it receives alone. A change reaches clients within your sync interval plus 5 minutes.</li>
       </ul>
     </div>
   </section>
@@ -322,12 +323,17 @@
   <h3 id="resTitle">Resolvers</h3>
   <p class="small">If this server copies its records to resolvers (it's a primary that isn't a resolver itself, for example),
     list them here. After each change the app asks them whether the records arrived.</p>
-  <label>Resolvers</label>
-  <textarea name="resolvers" placeholder="One per line, an IP address with an optional port&#10;192.168.10.2&#10;192.168.10.3"></textarea>
-  <div class="hint">The app asks them directly over DNS (port 53 unless given), so its container must be allowed to reach them.</div>
-  <label>Grace period (minutes)</label><input type="number" name="grace" min="1" max="120" value="10">
-  <div class="hint">How long a change may take to reach the resolvers. Until then the status is yellow ("copying"); after that it's red
-    and you get an e-mail (with <i>Renewal failed or needed early</i> on).</div>
+  <label>MikroTik resolvers (checked over the API)</label>
+  <div id="resDevs"></div>
+  <div class="hint">Enrolled devices. The app reads their static DNS list over the API; it never changes it. A device can be a DNS
+    server here and a resolver for another one at the same time.</div>
+  <label>Other resolvers (checked over DNS)</label>
+  <textarea name="resolvers" placeholder="One per line, an IP address with an optional port&#10;192.168.10.2"></textarea>
+  <div class="hint">For resolvers that aren't enrolled MikroTik devices. The app asks them over DNS (port 53 unless given), so its
+    container must be allowed to reach them.</div>
+  <label>Allowed sync delay (minutes)</label><input type="number" name="grace" min="1" max="120" value="10">
+  <div class="hint">How long a change may take to reach the resolvers. Until then it's not an error: the status is yellow
+    ("copying"). After that it turns red and you get an e-mail (with <i>Renewal failed or needed early</i> on).</div>
   <div class="foot"><button type="button" data-act="closeDialog">Cancel</button><button class="pri">Save</button></div>
 </form></dialog>
 

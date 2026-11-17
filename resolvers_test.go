@@ -77,7 +77,7 @@ func TestResolverCheck(t *testing.T) {
 		t.Fatalf("expect %+v", e)
 	}
 	run := func(at time.Time) resolverReport {
-		rep := checkResolvers(s, resolverExpect(cfg, s), queryResolver, at)
+		rep := checkResolvers(s, resolverExpect(cfg, s), dnsTargets(s.Resolvers), at)
 		s.Since, s.Gone = rep.Since, rep.Gone
 		return rep
 	}
@@ -125,7 +125,27 @@ func TestResolverCheck(t *testing.T) {
 	}
 	t.Logf("no answer: %v", rep.Late)
 
-	// 6. the grace period is per server
+	// 6. a MikroTik resolver read over the API: its static list, by device name
+	s.Resolvers, s.Since, s.Gone = nil, nil, nil
+	static := map[string][]string{"nas.example.com": {"192.0.2.20"}}
+	dev := []resolverTarget{{"resolver-1", func(n string) ([]string, error) { return static[n], nil }}}
+	rep = checkResolvers(s, resolverExpect(cfg, s), dev, t0.Add(300*time.Minute))
+	s.Since, s.Gone = rep.Since, rep.Gone
+	if rep.State != "copying" || !strings.Contains(rep.Issues[0], "copying") {
+		t.Fatalf("device resolver, AAAA missing: %+v", rep)
+	}
+	rep = checkResolvers(s, resolverExpect(cfg, s), dev, t0.Add(320*time.Minute))
+	s.Since, s.Gone = rep.Since, rep.Gone
+	if rep.State != "late" || !strings.Contains(rep.Late[0], "resolver-1 lacks 2001:db8::20") {
+		t.Fatalf("device resolver late: %+v", rep)
+	}
+	t.Logf("device resolver: %v", rep.Late)
+	static["nas.example.com"] = append(static["nas.example.com"], "2001:db8::20")
+	if rep = checkResolvers(s, resolverExpect(cfg, s), dev, t0.Add(321*time.Minute)); rep.State != "ok" {
+		t.Fatalf("device resolver synced: %+v", rep)
+	}
+
+	// 7. the grace period is per server
 	s.Grace = 30
 	if s.grace() != 30*time.Minute {
 		t.Fatal("grace")

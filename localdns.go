@@ -65,9 +65,12 @@ type DNSServer struct {
 	Blocked   []string  `json:"blocked,omitempty"` // names not written because of a conflict
 
 	// Resolvers that copy their records from this server (e.g. a primary that isn't a
-	// resolver itself). When set, the app asks them whether the records arrived.
-	Resolvers []string `json:"resolvers,omitempty"` // ip or [ip]:port
-	Grace     int      `json:"graceMinutes,omitempty"`
+	// resolver itself). When set, the app checks whether the records arrived: enrolled
+	// MikroTik devices by reading their static DNS list over the API, others by asking
+	// them over DNS.
+	ResolverDevices []string `json:"resolverDevices,omitempty"` // router ids
+	Resolvers       []string `json:"resolvers,omitempty"`       // ip or [ip]:port
+	Grace           int      `json:"graceMinutes,omitempty"`    // allowed sync delay
 	// status of the resolver check (resolvers.go)
 	Since           map[string]time.Time `json:"since,omitempty"`         // name -> waiting for the resolvers since
 	Gone            map[string][]string  `json:"gone,omitempty"`          // name -> removed addresses that must disappear there
@@ -81,36 +84,56 @@ const (
 	dnsCommentPrefix = "RouterOS ACME dns:"
 )
 
-// dnsComment marks a record as made by installation inst for device deviceID.
-func dnsComment(inst, deviceID string) string {
-	return dnsCommentPrefix + inst + "/" + deviceID + " - managed by RouterOS ACME, do not edit"
+// dnsComment marks a record as made by installation inst, for device deviceID, on DNS
+// server serverID. The server is part of it because a server can also receive copies of
+// another server's records (a primary synced to resolvers): those are left alone.
+func dnsComment(inst, deviceID, serverID string) string {
+	return dnsCommentPrefix + inst + "/" + deviceID + "@" + serverID + " - managed by RouterOS ACME, do not edit"
 }
 
-// dnsCommentOwner parses a comment made by dnsComment. Records written by dev builds
-// before the installation id existed have no "inst/" part (inst "").
-func dnsCommentOwner(c string) (inst, device string, ok bool) {
+// dnsOwner is what a record's comment says about who made it.
+type dnsOwner struct {
+	Inst, Device, Server string // Inst or Server "" = written by an earlier dev build
+}
+
+// dnsCommentOwner parses a comment made by dnsComment (or by earlier dev builds:
+// "device" and "inst/device").
+func dnsCommentOwner(c string) (dnsOwner, bool) {
 	rest, found := strings.CutPrefix(c, dnsCommentPrefix)
 	if !found {
-		return "", "", false
+		return dnsOwner{}, false
 	}
 	if i := strings.IndexByte(rest, ' '); i >= 0 {
 		rest = rest[:i]
 	}
-	inst, device, slash := strings.Cut(rest, "/")
-	if !slash {
-		inst, device = "", rest
+	var o dnsOwner
+	rest, o.Server, _ = strings.Cut(rest, "@")
+	if inst, dev, ok := strings.Cut(rest, "/"); ok {
+		o.Inst, o.Device = inst, dev
+	} else {
+		o.Device = rest
 	}
-	return inst, device, device != ""
+	return o, o.Device != ""
 }
 
-// mine reports whether a record comment belongs to installation inst (or is an old one
-// without an installation id, which the first installation to see it takes over).
-func mine(comment, inst string) (device string, ok bool) {
-	i, d, ok := dnsCommentOwner(comment)
-	if !ok || (i != "" && i != inst) {
-		return "", false
+// recordKind says how a record on DNS server serverID relates to installation inst.
+type recordKind int
+
+const (
+	foreign recordKind = iota // made by someone else (or another installation)
+	ownRec                    // made by this installation on this server
+	copyRec                   // made by this installation on another server, copied here
+)
+
+func classify(comment, inst, serverID string) (recordKind, dnsOwner) {
+	o, ok := dnsCommentOwner(comment)
+	switch {
+	case !ok || (o.Inst != "" && o.Inst != inst):
+		return foreign, o
+	case o.Server != "" && o.Server != serverID:
+		return copyRec, o
 	}
-	return d, true
+	return ownRec, o
 }
 
 // readAddresses reads a device's own addresses, without loopback and link-local.
@@ -203,7 +226,7 @@ type dnsPlan struct {
 // planDNS compares the static records on a DNS server with what should be there. It never
 // touches records it didn't make. Names blocked by someone else's record get nothing new;
 // the app's existing records for them stay until the conflict is solved.
-func planDNS(rows []map[string]string, wants []dnsWant, inst string) dnsPlan {
+func planDNS(rows []map[string]string, wants []dnsWant, inst, serverID string) dnsPlan {
 	var p dnsPlan
 	wanted := map[string]dnsWant{}
 	names := map[string]bool{}
@@ -214,7 +237,7 @@ func planDNS(rows []map[string]string, wants []dnsWant, inst string) dnsPlan {
 	}
 	blocked := map[string]bool{}
 	for _, r := range rows {
-		if _, ours := mine(r["comment"], inst); ours || r["disabled"] == "true" {
+		if k, _ := classify(r["comment"], inst, serverID); k != foreign || r["disabled"] == "true" {
 			continue
 		}
 		rn := strings.ToLower(strings.TrimSuffix(r["name"], "."))
@@ -235,8 +258,8 @@ func planDNS(rows []map[string]string, wants []dnsWant, inst string) dnsPlan {
 					val = r["cname"]
 				}
 				text = fmt.Sprintf("a record made by someone else exists (%s %s)", what, val)
-				if i, _, ok := dnsCommentOwner(r["comment"]); ok && i != inst {
-					text = fmt.Sprintf("another RouterOS ACME installation (%s) has a record for it (%s %s)", i, what, val)
+				if o, ok := dnsCommentOwner(r["comment"]); ok && o.Inst != inst {
+					text = fmt.Sprintf("another RouterOS ACME installation (%s) has a record for it (%s %s)", o.Inst, what, val)
 				}
 			case r["match-subdomain"] == "true" && rn != "" && strings.HasSuffix(n, "."+rn):
 				text = fmt.Sprintf("covered by the wildcard record for %s (made by someone else)", rn)
@@ -251,8 +274,8 @@ func planDNS(rows []map[string]string, wants []dnsWant, inst string) dnsPlan {
 	}
 	present := map[string]bool{}
 	for _, r := range rows {
-		dev, ours := mine(r["comment"], inst)
-		if !ours {
+		k, o := classify(r["comment"], inst, serverID)
+		if k == foreign {
 			continue
 		}
 		name := strings.ToLower(strings.TrimSuffix(r["name"], "."))
@@ -260,13 +283,24 @@ func planDNS(rows []map[string]string, wants []dnsWant, inst string) dnsPlan {
 		if a, err := netip.ParseAddr(addr); err == nil {
 			addr = a.String()
 		}
-		key := dev + "|" + name + "|" + addr
+		key := o.Device + "|" + name + "|" + addr
 		_, want := wanted[key]
-		if want && !present[key] && r["regexp"] == "" && r["match-subdomain"] != "true" {
+		plain := r["regexp"] == "" && r["match-subdomain"] != "true" && r["disabled"] != "true"
+		if k == copyRec {
+			// a copy of another server's record (synced here): never touched; if it's what
+			// this server should have, RouterOS won't take a second identical record anyway
+			if want && plain && !present[key] {
+				present[key] = true
+				p.Records++
+			}
+			continue
+		}
+		current := o.Inst != "" && o.Server != "" // earlier dev builds' formats are rewritten once
+		if want && current && !present[key] && r["regexp"] == "" && r["match-subdomain"] != "true" {
 			present[key] = true // also while its name is blocked: left until the conflict is solved
 			p.Records++
 		} else {
-			p.Remove = append(p.Remove, r[".id"]) // no longer wanted, or a duplicate
+			p.Remove = append(p.Remove, r[".id"]) // no longer wanted, a duplicate, or an old format
 		}
 	}
 	for key, w := range wanted {
@@ -415,7 +449,8 @@ func (m *Manager) syncServer(r *Router, wants []dnsWant) (dnsPlan, []dnsWant, er
 	if err != nil {
 		return dnsPlan{}, nil, fmt.Errorf("reading the static DNS records: %w", err)
 	}
-	p := planDNS(rows, wants, m.store.Snapshot().InstanceID)
+	inst := m.store.Snapshot().InstanceID
+	p := planDNS(rows, wants, inst, r.ID)
 	var removed []dnsWant
 	for _, id := range p.Remove {
 		var x map[string]string
@@ -433,8 +468,11 @@ func (m *Manager) syncServer(r *Router, wants []dnsWant) (dnsPlan, []dnsWant, er
 	}
 	for _, w := range p.Add {
 		_, err := api.run("/ip/dns/static/add", "=name="+w.Name, "=type="+rrType(w.Addr), "=address="+w.Addr,
-			"=ttl="+dnsTTL, "=comment="+dnsComment(m.store.Snapshot().InstanceID, w.Device))
-		if err != nil && !strings.Contains(err.Error(), "already exists") {
+			"=ttl="+dnsTTL, "=comment="+dnsComment(inst, w.Device, r.ID))
+		if err != nil {
+			if strings.Contains(err.Error(), "already exists") {
+				continue // the same name and address exists already (RouterOS takes no duplicates)
+			}
 			return p, removed, fmt.Errorf("adding %s %s: %w", w.Name, w.Addr, err)
 		}
 		m.logf("[%s] local DNS: added %s %s %s", r.Name, w.Name, rrType(w.Addr), w.Addr)
@@ -455,8 +493,9 @@ func (m *Manager) removeDNSRecords(r *Router) (int, error) {
 		return 0, err
 	}
 	n := 0
+	inst := m.store.Snapshot().InstanceID
 	for _, x := range rows {
-		if _, ours := mine(x["comment"], m.store.Snapshot().InstanceID); ours {
+		if k, _ := classify(x["comment"], inst, r.ID); k == ownRec { // copies from other servers stay
 			if _, err := api.run("/ip/dns/static/remove", "=.id="+x[".id"]); err != nil {
 				return n, err
 			}

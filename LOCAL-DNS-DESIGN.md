@@ -71,10 +71,11 @@ a clear warning, and only if no other records exist under it.
 ## Resolver check (built on dev, 2026-11-17)
 
 For a DNS server that copies its records to resolvers (the product owner's setup: a primary
-that isn't a resolver, synced to the resolvers every 5 minutes), the DNS tab takes a list of
-resolver addresses and a grace period (default 10 minutes, per server). After each change the
-app asks the resolvers directly over DNS whether the records arrived and removed addresses are
-gone:
+that isn't a resolver, synced to the resolvers every 5 minutes), the DNS tab takes the
+resolvers and an allowed sync delay (default 10 minutes, per server). Resolvers are either
+**enrolled MikroTik devices**, checked by reading their static DNS list over the API (read
+only; the primary needs no `allow-remote-requests`), or **IP addresses**, asked over DNS.
+After each change the app checks whether the records arrived and removed addresses are gone:
 
 - all there: green, "✓ on all resolvers";
 - not yet, within the grace period: yellow, "copying to the resolvers (3 of 10 min)";
@@ -88,11 +89,15 @@ resolvers.
 
 ## Two installations on one DNS server
 
-Records carry the installation's id: `RouterOS ACME dns:<installation>/<device>`. An
+Records carry the installation's id and the DNS server they were written to:
+`RouterOS ACME dns:<installation>/<device>@<server>`. The server part lets a device be a DNS
+server *and* receive synced copies of another server's records: copies are never touched, and
+a copy of exactly what the server needs counts as in place (RouterOS takes no second identical
+record). An
 installation only manages its own records; another installation's records are left alone, and
 a name both want is a conflict. (Found in testing: before the id, a second installation deleted
-the first one's records as "no longer wanted".) Records without an id, from earlier dev builds,
-are taken over by the first installation that sees them.
+the first one's records as "no longer wanted".) Records in the earlier dev formats (without
+installation or server) are rewritten once.
 
 ## Open questions (all answered)
 

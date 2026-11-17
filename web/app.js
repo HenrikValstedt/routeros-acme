@@ -931,15 +931,17 @@ function renderDNSServers() {
   $('#dnsSrvRows').innerHTML = list.length ? list.map(s => {
     const r = S.routers.find(x => x.id === s.routerId) || {name: '(removed device)'};
     const lines = (l, cls) => (l || []).map(c => `<div class="${cls}" title="${esc(c)}">${esc(c)}</div>`).join('');
-    const res = s.resolvers?.length ? s.resolverState === 'late' ? pill('err', 'Not on all resolvers') + lines(s.resolverIssues, 'errtxt')
+    const nRes = (s.resolvers?.length || 0) + (s.resolverDevices?.length || 0);
+    const resNames = [...(s.resolverDevices || []).map(id => S.routers.find(x => x.id === id)?.name || id), ...(s.resolvers || [])];
+    const res = nRes ? s.resolverState === 'late' ? pill('err', 'Not on all resolvers') + lines(s.resolverIssues, 'errtxt')
       : s.resolverState === 'copying' ? pill('warn', 'Copying to resolvers') + lines(s.resolverIssues, 'sub')
-      : s.resolverState === 'ok' ? `<div class="sub">✓ on ${s.resolvers.length === 1 ? 'the resolver' : 'all ' + s.resolvers.length + ' resolvers'}</div>` : '' : '';
+      : s.resolverState === 'ok' ? `<div class="sub">✓ on ${nRes === 1 ? 'the resolver' : 'all ' + nRes + ' resolvers'}</div>` : '' : '';
     const st = s.lastError ? pill('err', 'Error') + `<div class="errtxt" title="${esc(s.lastError)}">${esc(s.lastError)}</div>`
       : s.conflicts?.length ? pill('warn', s.conflicts.length + (s.conflicts.length === 1 ? ' conflict' : ' conflicts')) + lines(s.conflicts, 'errtxt') + res
       : s.resolverState === 'late' || s.resolverState === 'copying' ? res
       : hasT(s.lastSync) ? pill('ok', 'In sync') + res : pill('muted', 'Waiting for the next check');
     return `<tr><td class="main">${esc(r.name)}<div class="sub">${esc(r.board || '')}</div></td>
-      ${cell('Connection', esc(r.host || '') + (s.resolvers?.length ? `<div class="sub">resolvers: ${s.resolvers.map(esc).join(', ')}</div>` : ''), 'small')}
+      ${cell('Connection', esc(r.host || '') + (nRes ? `<div class="sub">resolvers: ${resNames.map(esc).join(', ')}</div>` : ''), 'small')}
       ${cell('Records', String(s.records ?? 0), 'small')}
       ${cell('Last sync', `<span title="${hasT(s.lastSync) ? fmt(s.lastSync) : ''}">${rel(s.lastSync)}</span>`, 'small nw')}
       ${cell('Status', st)}
@@ -966,13 +968,17 @@ function editResolvers(id) {
   resCur = id;
   $('#resTitle').textContent = 'Resolvers for ' + (r?.name || 'this DNS server');
   f.resolvers.value = (s.resolvers || []).map(a => a.replace(/^\[?([^\]]+?)\]?:53$/, '$1')).join('\n');
+  const devs = S.routers.filter(x => x.enrolled && x.id !== id);
+  $('#resDevs').innerHTML = devs.length ? devs.map(x => `<label class="inl"><input type="checkbox" name="resDev" value="${x.id}"
+    ${(s.resolverDevices || []).includes(x.id) ? 'checked' : ''}> ${esc(x.name)}</label>`).join('') : '<span class="small">No other enrolled devices.</span>';
   f.grace.value = s.graceMinutes || 10;
   resDlg.showModal();
 }
 $('#resForm').onsubmit = async e => {
   e.preventDefault(); const f = e.target;
   if (await act('PUT', '/api/dns-servers/' + resCur, 'Resolvers saved – checking them now',
-    {resolvers: f.resolvers.value.split(/[\s,]+/).filter(Boolean), graceMinutes: +f.grace.value})) resDlg.close();
+    {resolverDevices: [...f.querySelectorAll('[name=resDev]:checked')].map(c => c.value),
+     resolvers: f.resolvers.value.split(/[\s,]+/).filter(Boolean), graceMinutes: +f.grace.value})) resDlg.close();
 };
 function removeDNSServer(id) {
   const r = S.routers.find(x => x.id === id);
