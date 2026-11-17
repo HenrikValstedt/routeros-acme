@@ -72,7 +72,7 @@ Your data (accounts, certificates, keys) lives in the mount `containers/routeros
 container, so it survives `/container/stop` + `/container/start` and router reboots (*tested*).
 
 ## Notes
-- `latest` follows releases; use a version tag (e.g. `:1.6.6`) to decide upgrades yourself.
+- `latest` follows releases; use a version tag (e.g. `:1.7.0`) to decide upgrades yourself.
 - The image's hardening works on RouterOS too: the app drops to an unprivileged user (*tested*).
 - RouterOS 7.25 syntax: mounts and envs use `list=` (older guides with `name=` fail).
 - After a RouterOS upgrade the container package must match the RouterOS version (the normal upgrade handles it).
