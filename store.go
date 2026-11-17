@@ -189,6 +189,9 @@ type Config struct {
 	Tokens   []*Token      `json:"tokens"`
 	// DNSServers are enrolled devices that get the devices' local DNS records.
 	DNSServers []*DNSServer `json:"dnsServers,omitempty"`
+	// InstanceID identifies this installation in the records it makes on devices, so two
+	// installations that share a DNS server never take each other's records for their own.
+	InstanceID string `json:"instanceId,omitempty"`
 }
 
 func (c Config) dnsServer(routerID string) *DNSServer {
@@ -299,6 +302,9 @@ func OpenStore(dir string) (*Store, error) {
 	}
 	if st.CheckHours <= 0 {
 		st.CheckHours = 12
+	}
+	if s.cfg.InstanceID == "" {
+		s.cfg.InstanceID = newID()
 	}
 	for _, r := range s.cfg.Routers {
 		if r.LegacyPassword != "" || r.LegacyKey != "" {

@@ -177,6 +177,7 @@ func main() {
 		log.Fatal(err)
 	}
 	go a.mgr.Scheduler()
+	go a.mgr.ResolverWatch()
 	go a.mgr.refreshStaleZones() // e.g. right after the old single token was migrated
 	stopCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stopSignals()
@@ -386,6 +387,7 @@ func (a *app) routes() http.Handler {
 	adm("POST /api/routers/{id}/addresses", a.deviceAddressesAPI)
 	adm("POST /api/dns-servers", a.stepUp(a.addDNSServer))
 	adm("DELETE /api/dns-servers/{id}", a.stepUp(a.removeDNSServer))
+	adm("PUT /api/dns-servers/{id}", a.updateDNSServer)
 	adm("POST /api/devices/probe", a.probeDevice)
 	adm("POST /api/devices/enroll", a.stepUp(a.enrollDevice))
 	adm("GET /api/users", a.listUsers)

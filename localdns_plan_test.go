@@ -16,11 +16,11 @@ func rec(id, name, typ, addr, comment string, extra ...string) map[string]string
 }
 
 func TestPlanDNS(t *testing.T) {
-	ours := dnsComment("d1")
+	ours := dnsComment("me", "d1")
 	wants := []dnsWant{{"d1", "gw.example.com", "192.0.2.1"}, {"d1", "gw.example.com", "2001:db8::1"}}
 
 	// empty server: both added
-	p := planDNS(nil, wants)
+	p := planDNS(nil, wants, "me")
 	if len(p.Add) != 2 || len(p.Remove) != 0 || p.Records != 2 {
 		t.Fatalf("empty: %+v", p)
 	}
@@ -30,10 +30,10 @@ func TestPlanDNS(t *testing.T) {
 		rec("*1", "gw.example.com", "A", "192.0.2.9", ours),      // old address
 		rec("*2", "gw.example.com", "AAAA", "2001:db8::1", ours), // still right
 		rec("*3", "printer.example.com", "A", "192.0.2.50", "by hand"),
-		rec("*4", "old.example.com", "A", "192.0.2.7", dnsComment("gone")), // device removed
-		rec("*5", "gw.example.com", "AAAA", "2001:db8::1", ours),           // duplicate
+		rec("*4", "old.example.com", "A", "192.0.2.7", dnsComment("me", "gone")), // device removed
+		rec("*5", "gw.example.com", "AAAA", "2001:db8::1", ours),                 // duplicate
 	}
-	p = planDNS(rows, wants)
+	p = planDNS(rows, wants, "me")
 	slices.Sort(p.Remove)
 	if !slices.Equal(p.Remove, []string{"*1", "*4", "*5"}) {
 		t.Fatalf("remove %v", p.Remove)
@@ -49,7 +49,7 @@ func TestPlanDNS(t *testing.T) {
 		rec("*9", "example.com", "A", "203.0.113.1", "", "match-subdomain", "true"),
 		rec("*9", "", "A", "203.0.113.1", "", "regexp", `^.*\.example\.com$`),
 	} {
-		p = planDNS([]map[string]string{other, rec("*2", "gw.example.com", "AAAA", "2001:db8::1", ours)}, wants)
+		p = planDNS([]map[string]string{other, rec("*2", "gw.example.com", "AAAA", "2001:db8::1", ours)}, wants, "me")
 		if len(p.Add) != 0 || len(p.Remove) != 0 || len(p.Conflicts) != 1 || p.Records != 1 {
 			t.Fatalf("conflict with %v: %+v", other, p)
 		}
@@ -60,12 +60,12 @@ func TestPlanDNS(t *testing.T) {
 		rec("*9", "gw.example.com", "A", "203.0.113.1", "", "disabled", "true"),
 		rec("*8", "other.test", "A", "203.0.113.1", "", "match-subdomain", "true"),
 		rec("*7", "notgw.example.com", "A", "203.0.113.1", ""),
-	}, wants)
+	}, wants, "me")
 	if len(p.Conflicts) != 0 || len(p.Add) != 2 {
 		t.Fatalf("no conflict expected: %+v", p)
 	}
 	// nothing wanted any more: all ours go, nothing else
-	p = planDNS(rows, nil)
+	p = planDNS(rows, nil, "me")
 	if len(p.Remove) != 4 || p.Records != 0 {
 		t.Fatalf("remove all ours: %+v", p)
 	}
@@ -82,11 +82,14 @@ func TestDNSNamesAndRecords(t *testing.T) {
 			t.Fatalf("%q must be refused", bad)
 		}
 	}
-	if d, ok := dnsCommentDevice(dnsComment("abc123")); !ok || d != "abc123" {
-		t.Fatalf("comment round trip: %q %v", d, ok)
+	if i, d, ok := dnsCommentOwner(dnsComment("inst1", "abc123")); !ok || i != "inst1" || d != "abc123" {
+		t.Fatalf("comment round trip: %q %q %v", i, d, ok)
 	}
-	if _, ok := dnsCommentDevice("Managed by RouterOS ACME - do not edit"); ok {
+	if _, _, ok := dnsCommentOwner("Managed by RouterOS ACME - do not edit"); ok {
 		t.Fatal("other app comments are not DNS records")
+	}
+	if i, d, ok := dnsCommentOwner(dnsCommentPrefix + "abc123 - managed by RouterOS ACME, do not edit"); !ok || i != "" || d != "abc123" {
+		t.Fatal("records from before the installation id")
 	}
 
 	r := &Router{ID: "d1", DNS: &DNSRecord{Name: "gw.example.com", Picks: []AddrPick{{"vlan10", 4}, {"vlan10", 6}}},
@@ -140,5 +143,25 @@ func TestUpdateIsAllOrNothing(t *testing.T) {
 	_ = st.Update(func(c *Config) error { c.Settings.CheckHours = 7; return nil })
 	if c := st.Snapshot(); len(c.Routers) != 0 || c.Settings.CheckHours != 7 {
 		t.Fatal("the next change must not bring the failed one back")
+	}
+}
+
+// Two installations sharing a DNS server must never take each other's records for their
+// own (each used to delete the other's records as "no longer wanted").
+func TestTwoInstallations(t *testing.T) {
+	wants := []dnsWant{{"d1", "gw.example.com", "192.0.2.1"}}
+	rows := []map[string]string{
+		rec("*1", "nas.example.com", "A", "192.0.2.20", dnsComment("other", "d7")),                                    // the other installation's
+		rec("*2", "gw.example.com", "A", "192.0.2.1", dnsComment("me", "d1")),                                         // mine
+		rec("*3", "old.example.com", "A", "192.0.2.5", dnsCommentPrefix+"d9 - managed by RouterOS ACME, do not edit"), // pre-id
+	}
+	p := planDNS(rows, wants, "me")
+	if !slices.Equal(p.Remove, []string{"*3"}) || len(p.Add) != 0 || len(p.Conflicts) != 0 {
+		t.Fatalf("plan %+v", p)
+	}
+	// the same name in both installations: a conflict, nothing touched
+	p = planDNS([]map[string]string{rec("*1", "gw.example.com", "A", "192.0.2.9", dnsComment("other", "d7"))}, wants, "me")
+	if len(p.Add) != 0 || len(p.Remove) != 0 || len(p.Conflicts) != 1 || !strings.Contains(p.Conflicts[0].Text, "another RouterOS ACME installation") {
+		t.Fatalf("shared name: %+v", p)
 	}
 }

@@ -318,6 +318,19 @@
   <div class="foot"><button type="button" data-act="closeDialog">Cancel</button><button class="pri">Add DNS server</button></div>
 </form></dialog>
 
+<dialog id="resDlg" class="sm"><form method="dialog" id="resForm">
+  <h3 id="resTitle">Resolvers</h3>
+  <p class="small">If this server copies its records to resolvers (it's a primary that isn't a resolver itself, for example),
+    list them here. After each change the app asks them whether the records arrived.</p>
+  <label>Resolvers</label>
+  <textarea name="resolvers" placeholder="One per line, an IP address with an optional port&#10;192.168.10.2&#10;192.168.10.3"></textarea>
+  <div class="hint">The app asks them directly over DNS (port 53 unless given), so its container must be allowed to reach them.</div>
+  <label>Grace period (minutes)</label><input type="number" name="grace" min="1" max="120" value="10">
+  <div class="hint">How long a change may take to reach the resolvers. Until then the status is yellow ("copying"); after that it's red
+    and you get an e-mail (with <i>Renewal failed or needed early</i> on).</div>
+  <div class="foot"><button type="button" data-act="closeDialog">Cancel</button><button class="pri">Save</button></div>
+</form></dialog>
+
 <dialog id="enrDlg"><form method="dialog" id="enrForm">
   <h3 id="enrTitle">Enroll device</h3>
   <div class="stepper"><span data-s="1">1. Connect</span>›<span data-s="2">2. Review &amp; confirm</span>›<span data-s="3">3. Result</span></div>

@@ -14,6 +14,7 @@ const (
 	evDeployFail = "deployFail"
 	evExpiry     = "expiry"
 	evARIEarly   = "ariEarly" // the CA moved the renewal window earlier (revocation, incident)
+	evDNSLate    = "dnsLate"  // local DNS records didn't reach the resolvers in time
 )
 
 type event struct {
@@ -49,7 +50,7 @@ func kindEnabled(ms MailSettings, kind string) bool {
 	switch kind {
 	case evIssueOK:
 		return ms.NotifyIssueOK
-	case evIssueFail, evARIEarly: // same checkbox: on for everyone who gets failure e-mails
+	case evIssueFail, evARIEarly, evDNSLate: // same checkbox: on for everyone who gets failure e-mails
 		return ms.NotifyIssueFail
 	case evDeployOK:
 		return ms.NotifyDeployOK
@@ -137,6 +138,7 @@ func (m *Manager) flushEvents() {
 var kindTitle = map[string]string{
 	evIssueFail: "Certificate errors", evExpiry: "Expiring certificates", evDeployFail: "Deploy errors",
 	evARIEarly: "Early renewal requested by Let's Encrypt",
+	evDNSLate:  "DNS records not on the resolvers",
 	evIssueOK:  "Certificates renewed", evDeployOK: "Deployed to routers",
 }
 
@@ -145,7 +147,7 @@ func summarize(evs []event, publicURL string) (subject, body string) {
 	for _, e := range evs {
 		count[e.kind]++
 	}
-	order := []string{evARIEarly, evIssueFail, evDeployFail, evExpiry, evIssueOK, evDeployOK}
+	order := []string{evARIEarly, evIssueFail, evDeployFail, evDNSLate, evExpiry, evIssueOK, evDeployOK}
 	var parts []string
 	var b strings.Builder
 	for _, k := range order {
@@ -164,7 +166,7 @@ func summarize(evs []event, publicURL string) (subject, body string) {
 		b.WriteString(strings.Join(lines, "\n") + "\n\n")
 	}
 	prefix := "[RouterOS ACME] "
-	if count[evIssueFail]+count[evDeployFail]+count[evExpiry]+count[evARIEarly] > 0 {
+	if count[evIssueFail]+count[evDeployFail]+count[evExpiry]+count[evARIEarly]+count[evDNSLate] > 0 {
 		prefix = "[RouterOS ACME] ⚠ "
 	}
 	if publicURL != "" {

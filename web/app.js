@@ -378,6 +378,8 @@ function routerStatus(r) {
 function dnsLine(r) {
   if (!r.dns) return '';
   if (r.dns.error) return `<div class="errtxt" title="${esc(r.dns.error)}">DNS ${esc(r.dns.name)}: ${esc(r.dns.error)}</div>`;
+  if (r.dns.resolvers === 'copying') return `<div class="sub">DNS ${esc(r.dns.name)} (copying to the resolvers)</div>`;
+  if (r.dns.resolvers) return `<div class="errtxt" title="${esc(r.dns.resolvers)}">DNS ${esc(r.dns.name)}: ${esc(r.dns.resolvers)}</div>`;
   return `<div class="sub" title="${esc((r.dns.addrs || []).join(', '))}">DNS ${esc(r.dns.name)}${hasT(r.dns.synced) ? ' ✓' : ' (waiting for the next check)'}</div>`;
 }
 const isUpToDate = r => { const c = S.certs.find(c => c.id === r.certId); return r.enrolled && c?.fingerprint && r.deployedFingerprint === c.fingerprint; };
@@ -928,16 +930,21 @@ function renderDNSServers() {
   const list = S.dnsServers || [];
   $('#dnsSrvRows').innerHTML = list.length ? list.map(s => {
     const r = S.routers.find(x => x.id === s.routerId) || {name: '(removed device)'};
+    const lines = (l, cls) => (l || []).map(c => `<div class="${cls}" title="${esc(c)}">${esc(c)}</div>`).join('');
+    const res = s.resolvers?.length ? s.resolverState === 'late' ? pill('err', 'Not on all resolvers') + lines(s.resolverIssues, 'errtxt')
+      : s.resolverState === 'copying' ? pill('warn', 'Copying to resolvers') + lines(s.resolverIssues, 'sub')
+      : s.resolverState === 'ok' ? `<div class="sub">✓ on ${s.resolvers.length === 1 ? 'the resolver' : 'all ' + s.resolvers.length + ' resolvers'}</div>` : '' : '';
     const st = s.lastError ? pill('err', 'Error') + `<div class="errtxt" title="${esc(s.lastError)}">${esc(s.lastError)}</div>`
-      : s.conflicts?.length ? pill('warn', s.conflicts.length + (s.conflicts.length === 1 ? ' conflict' : ' conflicts'))
-        + s.conflicts.map(c => `<div class="errtxt" title="${esc(c)}">${esc(c)}</div>`).join('')
-      : hasT(s.lastSync) ? pill('ok', 'In sync') : pill('muted', 'Waiting for the next check');
+      : s.conflicts?.length ? pill('warn', s.conflicts.length + (s.conflicts.length === 1 ? ' conflict' : ' conflicts')) + lines(s.conflicts, 'errtxt') + res
+      : s.resolverState === 'late' || s.resolverState === 'copying' ? res
+      : hasT(s.lastSync) ? pill('ok', 'In sync') + res : pill('muted', 'Waiting for the next check');
     return `<tr><td class="main">${esc(r.name)}<div class="sub">${esc(r.board || '')}</div></td>
-      ${cell('Connection', esc(r.host || ''), 'small')}
+      ${cell('Connection', esc(r.host || '') + (s.resolvers?.length ? `<div class="sub">resolvers: ${s.resolvers.map(esc).join(', ')}</div>` : ''), 'small')}
       ${cell('Records', String(s.records ?? 0), 'small')}
       ${cell('Last sync', `<span title="${hasT(s.lastSync) ? fmt(s.lastSync) : ''}">${rel(s.lastSync)}</span>`, 'small nw')}
       ${cell('Status', st)}
-      <td class="adm acts-cell"><div class="acts"><button class="del" data-act="removeDNSServer" data-id="${s.routerId}">Remove</button></div></td></tr>`;
+      <td class="adm acts-cell"><div class="acts"><button data-act="editResolvers" data-id="${s.routerId}">Resolvers</button>
+        <button class="del" data-act="removeDNSServer" data-id="${s.routerId}">Remove</button></div></td></tr>`;
   }).join('') : emptyRow(6, 'globe', 'No DNS servers yet.<div class="small">Use <b>Add DNS server</b> to pick a router that serves DNS to your LAN.</div>');
 }
 function addDNSServer() {
@@ -952,6 +959,20 @@ $('#dnsSrvForm').onsubmit = async e => {
   const id = e.target.routerId.value;
   if (!id) { toast('Enroll the device first', true); return; }
   if (await act('POST', '/api/dns-servers', 'DNS server added – records are written at the check that runs now', {routerId: id})) dnsSrvDlg.close();
+};
+let resCur = null;
+function editResolvers(id) {
+  const s = S.dnsServers.find(x => x.routerId === id), r = S.routers.find(x => x.id === id), f = $('#resForm');
+  resCur = id;
+  $('#resTitle').textContent = 'Resolvers for ' + (r?.name || 'this DNS server');
+  f.resolvers.value = (s.resolvers || []).map(a => a.replace(/^\[?([^\]]+?)\]?:53$/, '$1')).join('\n');
+  f.grace.value = s.graceMinutes || 10;
+  resDlg.showModal();
+}
+$('#resForm').onsubmit = async e => {
+  e.preventDefault(); const f = e.target;
+  if (await act('PUT', '/api/dns-servers/' + resCur, 'Resolvers saved – checking them now',
+    {resolvers: f.resolvers.value.split(/[\s,]+/).filter(Boolean), graceMinutes: +f.grace.value})) resDlg.close();
 };
 function removeDNSServer(id) {
   const r = S.routers.find(x => x.id === id);
@@ -1055,6 +1076,7 @@ const actions = {
   addManual: () => addManual(),
   addDNSServer: () => addDNSServer(),
   removeDNSServer: el => removeDNSServer(el.dataset.id),
+  editResolvers: el => editResolvers(el.dataset.id),
   enrollForDNS: () => { dnsSrvDlg.close(); enrollWizard(); },
   delRouter: el => delRouter(el.dataset.id),
   inviteUser: () => inviteUser(),

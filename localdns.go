@@ -32,9 +32,10 @@ type DNSRecord struct {
 	Skip   []string   `json:"skip,omitempty"`   // DNS servers (router ids) it isn't written to
 
 	// status, maintained by the app
-	Addrs  []string  `json:"addrs,omitempty"` // the addresses in the record at the last sync
-	Error  string    `json:"error,omitempty"` // conflicts or problems at the last sync
-	Synced time.Time `json:"synced,omitzero"`
+	Addrs     []string  `json:"addrs,omitempty"` // the addresses in the record at the last sync
+	Error     string    `json:"error,omitempty"` // conflicts or problems at the last sync
+	Synced    time.Time `json:"synced,omitzero"`
+	Resolvers string    `json:"resolvers,omitempty"` // "copying", or why the resolvers are late ("" = fine or not checked)
 }
 
 // AddrPick selects a device's addresses by interface and family, so the record follows
@@ -61,6 +62,18 @@ type DNSServer struct {
 	LastError string    `json:"lastError,omitempty"`
 	Records   int       `json:"records"`
 	Conflicts []string  `json:"conflicts,omitempty"`
+	Blocked   []string  `json:"blocked,omitempty"` // names not written because of a conflict
+
+	// Resolvers that copy their records from this server (e.g. a primary that isn't a
+	// resolver itself). When set, the app asks them whether the records arrived.
+	Resolvers []string `json:"resolvers,omitempty"` // ip or [ip]:port
+	Grace     int      `json:"graceMinutes,omitempty"`
+	// status of the resolver check (resolvers.go)
+	Since           map[string]time.Time `json:"since,omitempty"`         // name -> waiting for the resolvers since
+	Gone            map[string][]string  `json:"gone,omitempty"`          // name -> removed addresses that must disappear there
+	ResolverState   string               `json:"resolverState,omitempty"` // ok | copying | late
+	ResolverIssues  []string             `json:"resolverIssues,omitempty"`
+	ResolverChecked time.Time            `json:"resolverChecked,omitzero"`
 }
 
 const (
@@ -68,20 +81,36 @@ const (
 	dnsCommentPrefix = "RouterOS ACME dns:"
 )
 
-func dnsComment(deviceID string) string {
-	return dnsCommentPrefix + deviceID + " - managed by RouterOS ACME, do not edit"
+// dnsComment marks a record as made by installation inst for device deviceID.
+func dnsComment(inst, deviceID string) string {
+	return dnsCommentPrefix + inst + "/" + deviceID + " - managed by RouterOS ACME, do not edit"
 }
 
-// dnsCommentDevice returns the device id in a comment made by dnsComment.
-func dnsCommentDevice(c string) (string, bool) {
-	rest, ok := strings.CutPrefix(c, dnsCommentPrefix)
-	if !ok {
-		return "", false
+// dnsCommentOwner parses a comment made by dnsComment. Records written by dev builds
+// before the installation id existed have no "inst/" part (inst "").
+func dnsCommentOwner(c string) (inst, device string, ok bool) {
+	rest, found := strings.CutPrefix(c, dnsCommentPrefix)
+	if !found {
+		return "", "", false
 	}
 	if i := strings.IndexByte(rest, ' '); i >= 0 {
 		rest = rest[:i]
 	}
-	return rest, rest != ""
+	inst, device, slash := strings.Cut(rest, "/")
+	if !slash {
+		inst, device = "", rest
+	}
+	return inst, device, device != ""
+}
+
+// mine reports whether a record comment belongs to installation inst (or is an old one
+// without an installation id, which the first installation to see it takes over).
+func mine(comment, inst string) (device string, ok bool) {
+	i, d, ok := dnsCommentOwner(comment)
+	if !ok || (i != "" && i != inst) {
+		return "", false
+	}
+	return d, true
 }
 
 // readAddresses reads a device's own addresses, without loopback and link-local.
@@ -174,7 +203,7 @@ type dnsPlan struct {
 // planDNS compares the static records on a DNS server with what should be there. It never
 // touches records it didn't make. Names blocked by someone else's record get nothing new;
 // the app's existing records for them stay until the conflict is solved.
-func planDNS(rows []map[string]string, wants []dnsWant) dnsPlan {
+func planDNS(rows []map[string]string, wants []dnsWant, inst string) dnsPlan {
 	var p dnsPlan
 	wanted := map[string]dnsWant{}
 	names := map[string]bool{}
@@ -185,7 +214,7 @@ func planDNS(rows []map[string]string, wants []dnsWant) dnsPlan {
 	}
 	blocked := map[string]bool{}
 	for _, r := range rows {
-		if _, ours := dnsCommentDevice(r["comment"]); ours || r["disabled"] == "true" {
+		if _, ours := mine(r["comment"], inst); ours || r["disabled"] == "true" {
 			continue
 		}
 		rn := strings.ToLower(strings.TrimSuffix(r["name"], "."))
@@ -206,6 +235,9 @@ func planDNS(rows []map[string]string, wants []dnsWant) dnsPlan {
 					val = r["cname"]
 				}
 				text = fmt.Sprintf("a record made by someone else exists (%s %s)", what, val)
+				if i, _, ok := dnsCommentOwner(r["comment"]); ok && i != inst {
+					text = fmt.Sprintf("another RouterOS ACME installation (%s) has a record for it (%s %s)", i, what, val)
+				}
 			case r["match-subdomain"] == "true" && rn != "" && strings.HasSuffix(n, "."+rn):
 				text = fmt.Sprintf("covered by the wildcard record for %s (made by someone else)", rn)
 			case re != nil && re.MatchString(n):
@@ -219,7 +251,7 @@ func planDNS(rows []map[string]string, wants []dnsWant) dnsPlan {
 	}
 	present := map[string]bool{}
 	for _, r := range rows {
-		dev, ours := dnsCommentDevice(r["comment"])
+		dev, ours := mine(r["comment"], inst)
 		if !ours {
 			continue
 		}
@@ -283,6 +315,8 @@ func (m *Manager) syncDNS() {
 		err       string
 		records   int
 		conflicts []string
+		blocked   []string
+		changed   []dnsWant // records added (Addr) or removed (Addr, Device "")
 	}
 	results := map[string]result{}
 	for _, s := range cfg.DNSServers {
@@ -294,13 +328,14 @@ func (m *Manager) syncDNS() {
 			results[s.RouterID] = result{err: "the device is not enrolled"}
 			continue
 		}
-		p, err := m.syncServer(r, dnsWants(cfg, s.RouterID))
-		res := result{records: p.Records}
+		p, removed, err := m.syncServer(r, dnsWants(cfg, s.RouterID))
+		res := result{records: p.Records, changed: append(slices.Clone(p.Add), removed...)}
 		if err != nil {
 			res.err = err.Error()
 			m.logf("[%s] local DNS: %v", r.Name, err)
 		}
 		for _, c := range p.Conflicts {
+			res.blocked = append(res.blocked, c.Name)
 			res.conflicts = append(res.conflicts, c.Name+": "+c.Text)
 			conflicts[c.Name] = append(conflicts[c.Name], r.Name+": "+c.Text)
 		}
@@ -313,6 +348,9 @@ func (m *Manager) syncDNS() {
 		for _, s := range cf.DNSServers {
 			if res, ok := results[s.RouterID]; ok {
 				s.LastSync, s.LastError, s.Records, s.Conflicts = now, res.err, res.records, res.conflicts
+				slices.Sort(res.blocked)
+				s.Blocked = slices.Compact(res.blocked)
+				noteChanges(s, res.changed, now)
 			}
 		}
 		for _, r := range cf.Routers {
@@ -341,6 +379,9 @@ func (m *Manager) syncDNS() {
 		}
 		return nil
 	})
+
+	// 4. did the records reach the resolvers that copy from these servers?
+	m.verifyResolvers()
 }
 
 // deviceAddresses reads a device's addresses and remembers them.
@@ -363,39 +404,42 @@ func (m *Manager) deviceAddresses(r *Router) ([]DevAddr, error) {
 	return addrs, nil
 }
 
-// syncServer applies the plan for one DNS server.
-func (m *Manager) syncServer(r *Router, wants []dnsWant) (dnsPlan, error) {
+// syncServer applies the plan for one DNS server. It also returns the records it removed.
+func (m *Manager) syncServer(r *Router, wants []dnsWant) (dnsPlan, []dnsWant, error) {
 	api, _, err := m.session(r)
 	if err != nil {
-		return dnsPlan{}, err
+		return dnsPlan{}, nil, err
 	}
 	defer api.Close()
 	rows, err := api.run("/ip/dns/static/print", "=.proplist=.id,name,type,address,cname,regexp,match-subdomain,disabled,comment")
 	if err != nil {
-		return dnsPlan{}, fmt.Errorf("reading the static DNS records: %w", err)
+		return dnsPlan{}, nil, fmt.Errorf("reading the static DNS records: %w", err)
 	}
-	p := planDNS(rows, wants)
+	p := planDNS(rows, wants, m.store.Snapshot().InstanceID)
+	var removed []dnsWant
 	for _, id := range p.Remove {
-		var what string
-		for _, x := range rows {
-			if x[".id"] == id {
-				what = x["name"] + " " + x["address"]
+		var x map[string]string
+		for _, row := range rows {
+			if row[".id"] == id {
+				x = row
 			}
 		}
+		what := x["name"] + " " + x["address"]
 		if _, err := api.run("/ip/dns/static/remove", "=.id="+id); err != nil {
-			return p, fmt.Errorf("removing %s: %w", what, err)
+			return p, removed, fmt.Errorf("removing %s: %w", what, err)
 		}
+		removed = append(removed, dnsWant{Name: strings.ToLower(x["name"]), Addr: x["address"]})
 		m.logf("[%s] local DNS: removed %s", r.Name, what)
 	}
 	for _, w := range p.Add {
 		_, err := api.run("/ip/dns/static/add", "=name="+w.Name, "=type="+rrType(w.Addr), "=address="+w.Addr,
-			"=ttl="+dnsTTL, "=comment="+dnsComment(w.Device))
+			"=ttl="+dnsTTL, "=comment="+dnsComment(m.store.Snapshot().InstanceID, w.Device))
 		if err != nil && !strings.Contains(err.Error(), "already exists") {
-			return p, fmt.Errorf("adding %s %s: %w", w.Name, w.Addr, err)
+			return p, removed, fmt.Errorf("adding %s %s: %w", w.Name, w.Addr, err)
 		}
 		m.logf("[%s] local DNS: added %s %s %s", r.Name, w.Name, rrType(w.Addr), w.Addr)
 	}
-	return p, nil
+	return p, removed, nil
 }
 
 // removeDNSRecords deletes every record the app made on a device (when it stops being a
@@ -412,7 +456,7 @@ func (m *Manager) removeDNSRecords(r *Router) (int, error) {
 	}
 	n := 0
 	for _, x := range rows {
-		if _, ours := dnsCommentDevice(x["comment"]); ours {
+		if _, ours := mine(x["comment"], m.store.Snapshot().InstanceID); ours {
 			if _, err := api.run("/ip/dns/static/remove", "=.id="+x[".id"]); err != nil {
 				return n, err
 			}
