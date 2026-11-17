@@ -726,8 +726,59 @@ function delCert(id) {
 
 // ---------- devices ----------
 function certOptions() {
+  const canNew = (S.dnsAccounts || []).length > 0;
   document.querySelectorAll('.certSel').forEach(sel => sel.innerHTML = '<option value="">— none —</option>' +
-    S.certs.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join(''));
+    S.certs.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('') +
+    `<option value="__new" ${canNew ? '' : 'disabled'}>+ New certificate…${canNew ? '' : ' (add a DNS account under Settings first)'}</option>`);
+  document.querySelectorAll('.newcert').forEach(b => { const t = b.querySelector('textarea'); b.hidden = true; t.value = ''; t.dataset.auto = '1'; });
+}
+// "+ New certificate…" in a device dialog: names suggested from the device, the DNS
+// account that will validate each, and the certificate created when the dialog is saved
+function newCertSuggest(f) {
+  const rt = f === $('#rtForm');
+  if (rt && f.dnsOn.checked && f.dnsName.value.trim()) return f.dnsName.value.trim().toLowerCase().replace(/\.$/, '');
+  const host = ((rt ? rtCur?.host : f.host.value) || '').trim().toLowerCase().replace(/\.$/, '');
+  if (/[a-z]/.test(host) && host.includes('.') && !host.includes(':')) return host;
+  const name = (f.name.value || '').trim().toLowerCase();
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(name) && /[a-z]/.test(name)) return name;
+  const zone = (S.dnsAccounts || []).flatMap(a => a.zones || [])[0];
+  const label = name.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  return zone && label ? label + '.' + zone : '';
+}
+const newCertNames = f => f.newCertNames.value.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+function newCertRoute(f) {
+  const accs = S.dnsAccounts || [], names = newCertNames(f), unknown = accs.filter(a => !(a.zones || []).length);
+  f.querySelector('.newroute').innerHTML = !names.length ? 'Enter the name(s) the certificate is for, e.g. gw.example.com.'
+    : names.map(n => {
+      let {account} = zoneFor(n, accs);
+      if (!account && unknown.length === 1) account = unknown[0];
+      if (!account) return `<span class="err">${esc(n)} → no DNS account covers this zone</span>`;
+      return `${esc(n)} → validated through <b>${esc(account.name)}</b>` +
+        (account.provider === 'acmedns' ? ' (you\'ll get a CNAME record to create, under Certificates)' : '');
+    }).join('<br>') + '<br>Created when you save, then issued in the background.';
+}
+function newCertToggle(f) {
+  const box = f.querySelector('.newcert'), t = f.newCertNames, on = f.certId.value === '__new';
+  box.hidden = !on;
+  if (on && (!t.value || t.dataset.auto === '1')) t.value = newCertSuggest(f);
+  if (on) newCertRoute(f);
+  if (f === $('#rtForm') && !$('#rtDns').hidden) dnsHint();
+}
+// creates the certificate when "+ New certificate…" is picked; returns the id to use
+async function certForDevice(f) {
+  if (f.certId.value !== '__new') return f.certId.value;
+  const names = newCertNames(f);
+  if (!names.length) throw new Error('Enter the name(s) for the new certificate');
+  const r = await api('POST', '/api/certs', {name: names[0], domains: names, dnsAccountId: ''});
+  // keep it picked, so saving again (e.g. after a mistake elsewhere) doesn't create a second one
+  f.certId.add(new Option(names[0], r.id)); f.certId.value = r.id; f.querySelector('.newcert').hidden = true;
+  toast(`Certificate ${names[0]} created – issuing in the background`);
+  return r.id;
+}
+for (const f of [$('#rtForm'), $('#enrForm')]) {
+  f.certId.addEventListener('change', () => newCertToggle(f));
+  f.newCertNames.addEventListener('input', () => { f.newCertNames.dataset.auto = '0'; newCertRoute(f); if (f === $('#rtForm') && !$('#rtDns').hidden) dnsHint(); });
+  f.name.addEventListener('input', () => { if (f.certId.value === '__new' && f.newCertNames.dataset.auto === '1') newCertToggle(f); });
 }
 const ago = t => hasT(t) ? fmt(t) : '—';
 function editRouter(id) { openDevice(S.routers.find(r => r.id === id)); }
@@ -774,16 +825,18 @@ function dnsSuggest(r, certId) {
   if (/[a-z]/.test(host) && host.includes('.') && !host.includes(':')) return host;
   const name = (r.name || '').trim().toLowerCase();
   if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(name) && /[a-z]/.test(name)) return name;
-  const c = S.certs.find(c => c.id === certId), doms = c?.domains || [];
+  const doms = certId === '__new' ? newCertNames($('#rtForm')) : S.certs.find(c => c.id === certId)?.domains || [];
   const exact = doms.filter(d => !d.startsWith('*.'));
   if (exact.length === 1) return exact[0];
-  const base = doms.map(d => d.replace(/^\*\./, '')).sort((a, b) => a.length - b.length)[0];
+  const base = doms.map(d => d.replace(/^\*\./, '')).sort((a, b) => a.length - b.length)[0]
+    || (S.dnsAccounts || []).flatMap(a => a.zones || [])[0]; // no certificate yet: the first DNS zone
   const label = name.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
   return base && label ? label + '.' + base : '';
 }
 const certCovers = (c, n) => (c?.domains || []).some(d => d === n || (d.startsWith('*.') && n.endsWith(d.slice(1)) && !n.slice(0, n.length - d.length + 1).includes('.')));
 function dnsHint() {
-  const f = $('#rtForm'), n = f.dnsName.value.trim().toLowerCase().replace(/\.$/, ''), c = S.certs.find(c => c.id === f.certId.value);
+  const f = $('#rtForm'), n = f.dnsName.value.trim().toLowerCase().replace(/\.$/, '');
+  const c = f.certId.value === '__new' ? {name: 'the new certificate', domains: newCertNames(f)} : S.certs.find(c => c.id === f.certId.value);
   $('#rtDnsHint').innerHTML = !n ? 'An exact name, like gw.example.com.'
     : !c ? 'No certificate selected: browsers will warn on https to this name.'
     : certCovers(c, n) ? `✓ Covered by certificate <b>${esc(c.name)}</b>, so https to this name works without a warning.`
@@ -820,7 +873,11 @@ async function dnsToggle() {
   }).join('') || '<span class="small">No addresses found on the device.</span>');
 }
 $('#rtForm').dnsOn.addEventListener('change', dnsToggle);
-$('#rtForm').dnsName.addEventListener('input', dnsHint);
+$('#rtForm').dnsName.addEventListener('input', () => {
+  const f = $('#rtForm');
+  if (f.certId.value === '__new' && f.newCertNames.dataset.auto === '1') f.newCertNames.value = newCertSuggest(f), newCertRoute(f);
+  dnsHint();
+});
 $('#rtForm').certId.addEventListener('change', () => { if (!$('#rtDns').hidden) dnsHint(); });
 $('#rtForm').onsubmit = async e => {
   e.preventDefault(); const f = e.target;
@@ -829,7 +886,9 @@ $('#rtForm').onsubmit = async e => {
     picks: [...f.querySelectorAll('[name=pick]:checked')].map(c => { const [i, fam] = c.value.split('|'); return {interface: i, family: +fam}; }),
     static: f.dnsStatic.value.split(/[\s,]+/).filter(Boolean),
     skip: [...f.querySelectorAll('[name=srv]')].filter(c => !c.checked).map(c => c.value)};
-  const body = {id: f.id.value, name: f.name.value, certId: f.certId.value, manual: !!rtCur?.manual, dns,
+  let certId;
+  try { certId = await certForDevice(f); } catch (err) { toast(err.message, true); return; }
+  const body = {id: f.id.value, name: f.name.value, certId, manual: !!rtCur?.manual, dns,
     extraCommands: f.extraCommands.value, enabled: f.enabled.checked,
     services: [...f.querySelectorAll('[name=svc]:checked')].map(c => c.value)};
   if (await act('POST', '/api/routers', f.id.value ? 'Device saved' : 'Manual device added', body)) rtDlg.close();
@@ -907,17 +966,18 @@ $('#enrForm').onsubmit = async e => {
       enrChanges(f); enrStep(2);
     } else if (enrCur === 2) {
       if (!f.confirmed.checked) { toast('Confirm the device (host key) first', true); return; }
+      const certId = await certForDevice(f);
       btn.textContent = 'Enrolling…';
       const r = await api('POST', '/api/devices/enroll', {...enrLogin(f), hostKey: enrProbe.hostKey, id: f.id.value,
         name: f.name.value, apiPort: +f.apiPort.value, serviceUser: f.serviceUser.value, allowedFrom: f.allowedFrom.value,
-        certId: f.certId.value, extraCommands: f.extraCommands.value, enabled: f.enabled.checked,
+        certId, extraCommands: f.extraCommands.value, enabled: f.enabled.checked,
         services: [...f.querySelectorAll('[data-step="2"] [name=svc]:checked')].map(c => c.value)});
       f.adminPassword.value = ''; f.adminKey.value = '';   // don't keep them in the page either
       $('#enrSteps').innerHTML = r.steps.map(s => `<li class="${s.ok ? 'ok' : 'bad'}"><span class="ico">${s.ok ? '✓' : '✗'}</span>
         <span>${esc(s.title)}</span><span class="d">${esc(s.detail)}</span></li>`).join('');
       $('#enrDone').hidden = !r.ok; $('#enrFail').hidden = r.ok;
       $('#enrDone').innerHTML = `<b>Enrolled.</b> RouterOS ACME now manages this device over api-ssl only, with a pinned certificate
-        and its own restricted account. ${f.certId.value ? 'The certificate is deployed in the background. Watch the status in the device list.' : 'Pick a certificate under Edit to start deploying.'}`;
+        and its own restricted account. ${certId ? 'The certificate is deployed in the background. Watch the status in the device list.' : 'Pick a certificate under Edit to start deploying.'}`;
       $('#enrFail').innerHTML = `<b>Enrollment did not complete:</b> ${esc(r.error || '')}<br>Nothing is left half-configured for login. Fix the problem and run enrollment again.`;
       enrStep(3); refresh();
     }

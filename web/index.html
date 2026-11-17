@@ -285,6 +285,11 @@
     <div><label>Name</label><input type="text" name="name"></div>
     <div><label>Certificate</label><select name="certId" class="certSel"></select></div>
   </div>
+  <div class="info newcert" id="rtNewCert" hidden>
+    <label class="u-mt0">New certificate for (one name per line)</label>
+    <textarea name="newCertNames" rows="2" placeholder="gw.example.com"></textarea>
+    <div class="hint newroute"></div>
+  </div>
   <div id="rtDeploy">
   <label>Assign certificate to</label>
   <label class="inl"><input type="checkbox" name="svc" value="www-ssl"> www-ssl (WebFig)</label>
@@ -378,6 +383,11 @@
       <div><label>Certificate to deploy</label><select name="certId" class="certSel"></select></div>
       <div><label>api-ssl port</label><input type="number" name="apiPort" min="1" max="65535"></div>
       <div><label>Service account name</label><input type="text" name="serviceUser" value="routeros-acme" maxlength="32"></div>
+    </div>
+    <div class="info newcert" id="enrNewCert" hidden>
+      <label class="u-mt0">New certificate for (one name per line)</label>
+      <textarea name="newCertNames" rows="2" placeholder="gw.example.com"></textarea>
+      <div class="hint newroute"></div>
     </div>
     <label>Service account may log in only from</label><input type="text" name="allowedFrom" placeholder="empty = any address">
     <div class="hint">Detected: this is the address the device sees for RouterOS ACME. Use a CIDR (e.g. 10.0.0.0/24) if it can change, or leave it empty to allow any address.</div>

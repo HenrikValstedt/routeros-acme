@@ -586,6 +586,7 @@ func (a *app) saveCert(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = domains[0]
 	}
+	id := in.ID
 	err = a.store.Update(func(c *Config) error {
 		if in.DNSID != "" && c.dnsAccount(in.DNSID) == nil {
 			return errors.New("unknown DNS account")
@@ -597,7 +598,8 @@ func (a *app) saveCert(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if in.ID == "" {
-			c.Certs = append(c.Certs, &Cert{ID: newID(), Name: name, Domains: domains, DNSID: in.DNSID})
+			id = newID()
+			c.Certs = append(c.Certs, &Cert{ID: id, Name: name, Domains: domains, DNSID: in.DNSID})
 			return nil
 		}
 		x := c.cert(in.ID)
@@ -616,7 +618,7 @@ func (a *app) saveCert(w http.ResponseWriter, r *http.Request) {
 	}
 	go a.mgr.syncAllACMEDNS() // new names behind acme-dns get registered, so their CNAMEs can be shown
 	a.mgr.Trigger()
-	writeJSON(w, "ok")
+	writeJSON(w, map[string]string{"id": id}) // a device dialog creating a certificate needs its id
 }
 
 func (a *app) deleteCert(w http.ResponseWriter, r *http.Request) {
