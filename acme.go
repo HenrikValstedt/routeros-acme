@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	mrand "math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,20 +85,16 @@ func saveAccount(path string, u *acmeUser) error {
 	return writeFileSync(path, b, 0o600)
 }
 
-// obtain requests a new certificate via DNS-01 on Cloudflare and stores it
-// as <data>/certs/<id>/{fullchain,privkey}.pem.
-func obtain(dataDir string, st Settings, c Cert, prov challenge.Provider, logf func(string, ...any)) (*x509.Certificate, error) {
+// newACMEClient builds a lego client for the configured CA. The account is loaded
+// (or a key generated) but not registered.
+func newACMEClient(dataDir string, st Settings) (*lego.Client, *acmeUser, string, error) {
 	if st.Email == "" {
-		return nil, errors.New("the ACME e-mail address must be set in Settings")
-	}
-	if len(c.Domains) == 0 {
-		return nil, errors.New("certificate has no domains")
+		return nil, nil, "", errors.New("the ACME e-mail address must be set in Settings")
 	}
 	u, accPath, err := loadAccount(dataDir, st.Email, st.Staging)
 	if err != nil {
-		return nil, fmt.Errorf("account: %w", err)
+		return nil, nil, "", fmt.Errorf("account: %w", err)
 	}
-
 	cfg := lego.NewConfig(u)
 	cfg.UserAgent = "routeros-acme"
 	cfg.CADirURL = lego.LEDirectoryProduction
@@ -112,8 +109,22 @@ func obtain(dataDir string, st Settings, c Cert, prov challenge.Provider, logf f
 		kt = certcrypto.RSA2048
 	}
 	cfg.Certificate.KeyType = kt
-
 	client, err := lego.NewClient(cfg)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return client, u, accPath, nil
+}
+
+// obtain requests a new certificate via DNS-01 and stores it as
+// <data>/certs/<id>/{fullchain,privkey}.pem. replaces is the ARI certificate ID of the
+// certificate this one renews ("" = a new certificate); it lets Let's Encrypt treat the
+// order as a renewal (exempt from rate limits).
+func obtain(dataDir string, st Settings, c Cert, prov challenge.Provider, replaces string, logf func(string, ...any)) (*x509.Certificate, error) {
+	if len(c.Domains) == 0 {
+		return nil, errors.New("certificate has no domains")
+	}
+	client, u, accPath, err := newACMEClient(dataDir, st)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +150,15 @@ func obtain(dataDir string, st Settings, c Cert, prov challenge.Provider, logf f
 	}
 
 	logf("requesting certificate %q for %s", c.Name, strings.Join(c.Domains, ", "))
-	res, err := client.Certificate.Obtain(certificate.ObtainRequest{Domains: c.Domains, Bundle: true})
+	req := certificate.ObtainRequest{Domains: c.Domains, Bundle: true, ReplacesCertID: replaces}
+	res, err := client.Certificate.Obtain(req)
+	if err != nil && replaces != "" && strings.Contains(strings.ToLower(err.Error()), "replace") {
+		// The CA refused the renewal link itself (lego already handles "alreadyReplaced"):
+		// order a plain new certificate rather than failing the renewal.
+		logf("certificate %q: the CA did not accept it as a renewal (%v) – requesting it as a new certificate", c.Name, err)
+		req.ReplacesCertID = ""
+		res, err = client.Certificate.Obtain(req)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +178,26 @@ func obtain(dataDir string, st Settings, c Cert, prov challenge.Provider, logf f
 		return nil, err
 	}
 	return leaf, nil
+}
+
+// renewalInfo asks the CA for the suggested renewal window of leaf (ACME Renewal
+// Information, RFC 9773). It needs no registered account.
+func renewalInfo(dataDir string, st Settings, leaf *x509.Certificate) (*certificate.RenewalInfoResponse, error) {
+	client, _, _, err := newACMEClient(dataDir, st)
+	if err != nil {
+		return nil, err
+	}
+	ri, err := client.Certificate.GetRenewalInfo(certificate.RenewalInfoRequest{Cert: leaf})
+	if err != nil {
+		return nil, err
+	}
+	// lego doesn't check the HTTP status: an unknown certificate (another CA, staging vs
+	// production) decodes as an empty window.
+	w := ri.SuggestedWindow
+	if w.Start.IsZero() || w.End.Before(w.Start) {
+		return nil, errors.New("the CA has no renewal information for this certificate")
+	}
+	return ri, nil
 }
 
 func loadCertFiles(dataDir, id string) (chain, key []byte, err error) {
@@ -185,8 +224,43 @@ func fingerprint(c *x509.Certificate) string {
 	return hex.EncodeToString(h[:])
 }
 
-func needsRenewal(c *Cert, renewDays int) bool {
-	return c.NotAfter.IsZero() || time.Until(c.NotAfter) < time.Duration(renewDays)*24*time.Hour
+// ariFloor: renew this close to expiry even if the CA's window says later (a safety net
+// against a wrong or stale window).
+const ariFloor = 7 * 24 * time.Hour
+
+// hasARI reports whether c has a renewal time from the CA for its current certificate.
+func (c *Cert) hasARI() bool {
+	return !c.RenewAt.IsZero() && c.ARIFor != "" && c.ARIFor == c.Fingerprint
+}
+
+// renewTime is when c is due: the time picked in the CA's renewal window (ARI), or
+// otherwise renewDays before expiry. Zero = not issued yet (due now).
+func renewTime(c *Cert, renewDays int) time.Time {
+	if c.NotAfter.IsZero() {
+		return time.Time{}
+	}
+	fixed := c.NotAfter.Add(-time.Duration(renewDays) * 24 * time.Hour)
+	if !c.hasARI() {
+		return fixed
+	}
+	floor := c.NotAfter.Add(-min(ariFloor, time.Duration(renewDays)*24*time.Hour))
+	if c.RenewAt.Before(floor) {
+		return c.RenewAt
+	}
+	return floor
+}
+
+func needsRenewal(c *Cert, renewDays int, now time.Time) bool {
+	return !now.Before(renewTime(c, renewDays))
+}
+
+// pickInWindow chooses a uniformly random time in [start, end), as RFC 9773 recommends,
+// so that many clients don't renew at the same moment.
+func pickInWindow(start, end time.Time) time.Time {
+	if w := end.Sub(start); w > 0 {
+		return start.Add(time.Duration(mrand.Int64N(int64(w))))
+	}
+	return start
 }
 
 func splitList(s string) []string {

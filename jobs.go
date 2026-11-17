@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/challenge"
 )
 
@@ -113,8 +114,7 @@ func (m *Manager) Scheduler() {
 			timer.Stop()
 		}
 		m.Go(m.cycle)
-		h := m.store.Snapshot().Settings.CheckHours
-		timer.Reset(time.Duration(h) * time.Hour)
+		timer.Reset(nextWake(m.store.Snapshot(), time.Now()))
 	}
 }
 
@@ -135,7 +135,8 @@ func (m *Manager) cycle() {
 			m.logf("check stopped early: shutting down (the rest runs at the next start)")
 			return
 		}
-		if !needsRenewal(c, cfg.Settings.RenewDays) {
+		m.refreshARI(c.ID)
+		if c = m.store.Snapshot().cert(c.ID); c == nil || !needsRenewal(c, cfg.Settings.RenewDays, time.Now()) {
 			continue
 		}
 		// Back off after a failure to stay clear of Let's Encrypt rate limits.
@@ -278,7 +279,7 @@ func (m *Manager) issue(id string) {
 			}
 		}
 		m.logf("certificate %q: DNS validation via %s", c.Name, strings.Join(via, ", "))
-		leaf, err = obtain(m.dataDir, cfg.Settings, *c, prov, m.logf)
+		leaf, err = obtain(m.dataDir, cfg.Settings, *c, prov, m.replacesID(*c), m.logf)
 	}
 	_ = m.store.Update(func(cf *Config) error {
 		x := cf.cert(id)
@@ -302,6 +303,135 @@ func (m *Manager) issue(id string) {
 	}
 	m.logf("certificate %q issued, valid until %s", c.Name, leaf.NotAfter.Format(time.DateOnly))
 	m.event(evIssueOK, "cert:"+id, fmt.Sprintf("%s (%s), valid until %s", c.Name, strings.Join(c.Domains, ", "), leaf.NotAfter.Format(time.DateOnly)))
+	m.refreshARI(id) // the new certificate's renewal window
+}
+
+// replacesID is the ARI ID of the certificate c currently holds, when the CA knows it
+// and the names are unchanged, so a new order counts as its renewal. "" otherwise.
+func (m *Manager) replacesID(c Cert) string {
+	if !c.hasARI() {
+		return ""
+	}
+	chain, _, err := loadCertFiles(m.dataDir, c.ID)
+	if err != nil {
+		return ""
+	}
+	leaf, err := parseLeaf(chain)
+	if err != nil || fingerprint(leaf) != c.Fingerprint || !sameNames(leaf.DNSNames, c.Domains) {
+		return ""
+	}
+	id, err := certificate.MakeARICertID(leaf)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+func sameNames(a, b []string) bool {
+	norm := func(l []string) []string {
+		out := make([]string, len(l))
+		for i, s := range l {
+			out[i] = strings.ToLower(strings.TrimSuffix(s, "."))
+		}
+		slices.Sort(out)
+		return slices.Compact(out)
+	}
+	return slices.Equal(norm(a), norm(b))
+}
+
+// ariRetry is how long to wait before asking the CA again when it gives no Retry-After,
+// or when asking failed.
+const ariRetry = 6 * time.Hour
+
+// refreshARI asks the CA for the renewal window of certificate id (ACME Renewal
+// Information, RFC 9773) when it's time to ask again, and picks a renewal time in it.
+func (m *Manager) refreshARI(id string) {
+	cfg := m.store.Snapshot()
+	c := cfg.cert(id)
+	if c == nil || c.Fingerprint == "" || c.NotAfter.IsZero() {
+		return
+	}
+	now := time.Now()
+	if c.ARIFor == c.Fingerprint && now.Before(c.ARINext) {
+		return
+	}
+	chain, _, err := loadCertFiles(m.dataDir, id)
+	if err != nil {
+		return
+	}
+	leaf, err := parseLeaf(chain)
+	if err != nil || fingerprint(leaf) != c.Fingerprint {
+		return
+	}
+	ri, err := renewalInfo(m.dataDir, cfg.Settings, leaf)
+	if err != nil {
+		unknown := strings.Contains(err.Error(), "no renewal information")
+		_ = m.store.Update(func(cf *Config) error {
+			x := cf.cert(id)
+			if x == nil || x.Fingerprint != c.Fingerprint {
+				return nil
+			}
+			if x.ARIError != err.Error() {
+				m.logf("certificate %q: no renewal window from the CA (%v) – renewing %d days before expiry", c.Name, err, cf.Settings.RenewDays)
+			}
+			x.ARIError = err.Error()
+			x.ARINext = now.Add(ariRetry)
+			if unknown { // e.g. issued by another CA: the old window and renewal link don't apply
+				x.ARIFor, x.RenewAt, x.ARIStart, x.ARIEnd, x.ARIExplain = "", time.Time{}, time.Time{}, time.Time{}, ""
+			}
+			return nil
+		})
+		return
+	}
+	start, end := ri.SuggestedWindow.Start.UTC(), ri.SuggestedWindow.End.UTC()
+	retry := ri.RetryAfter
+	if retry <= 0 {
+		retry = ariRetry
+	}
+	retry = max(retry, time.Hour)
+	var msg string
+	_ = m.store.Update(func(cf *Config) error {
+		x := cf.cert(id)
+		if x == nil || x.Fingerprint != c.Fingerprint {
+			return nil
+		}
+		changed := x.ARIFor != x.Fingerprint || !x.ARIStart.Equal(start) || !x.ARIEnd.Equal(end)
+		if changed {
+			earlier := x.ARIFor == x.Fingerprint && !x.ARIStart.IsZero() && start.Before(x.ARIStart)
+			x.RenewAt = pickInWindow(start, end)
+			switch {
+			case earlier:
+				msg = fmt.Sprintf("certificate %q: Let's Encrypt moved the renewal window earlier, to %s – %s; renewing at %s",
+					c.Name, start.Local().Format(time.DateTime), end.Local().Format(time.DateTime), x.RenewAt.Local().Format(time.DateTime))
+			default:
+				msg = fmt.Sprintf("certificate %q: renewal window from the CA %s – %s, renewing at %s",
+					c.Name, start.Local().Format(time.DateTime), end.Local().Format(time.DateTime), x.RenewAt.Local().Format(time.DateTime))
+			}
+			if ri.ExplanationURL != "" {
+				msg += " (reason: " + ri.ExplanationURL + ")"
+			}
+		}
+		x.ARIFor, x.ARIStart, x.ARIEnd = x.Fingerprint, start, end
+		x.ARIExplain = ri.ExplanationURL
+		x.ARINext = now.Add(retry)
+		x.ARIError = ""
+		return nil
+	})
+	if msg != "" {
+		m.logf("%s", msg)
+	}
+}
+
+// nextWake is when the scheduler should run next: after the check interval, or earlier
+// when a certificate's renewal time comes first.
+func nextWake(cfg Config, now time.Time) time.Duration {
+	d := time.Duration(cfg.Settings.CheckHours) * time.Hour
+	for _, c := range cfg.Certs {
+		if t := renewTime(c, cfg.Settings.RenewDays); !t.IsZero() && t.After(now) {
+			d = min(d, t.Sub(now)+time.Minute)
+		}
+	}
+	return d
 }
 
 // session opens an api-ssl session to an enrolled device and finishes an

@@ -239,7 +239,7 @@ html{scroll-behavior:smooth;scroll-padding-top:70px}
       <div class="feat"><span class="ic"><svg><use href="#i-router"/></svg></span><h3>Device enrollment</h3>
         <p>Connect a router once with an admin login. It gets a restricted service account, and from then on everything goes over api-ssl with a pinned certificate.</p></div>
       <div class="feat"><span class="ic"><svg><use href="#i-box"/></svg></span><h3>Automatic renewal</h3>
-        <p>Every 12 hours it renews what expires within 30 days and pushes it to www-ssl, api-ssl, or anything else you script. Need it elsewhere? Export it as PEM files or a PFX.</p></div>
+        <p>It renews when Let's Encrypt suggests (ARI), straight away if a certificate is ever revoked, and pushes it to www-ssl, api-ssl, or anything else you script. Need it elsewhere? Export it as PEM files or a PFX.</p></div>
       <div class="feat"><span class="ic"><svg><use href="#i-users"/></svg></span><h3>Users and roles</h3>
         <p>Admins change things; viewers can only look. Admins must use two-factor authentication. Invite people by e-mail and let them choose their own password.</p></div>
       <div class="feat"><span class="ic"><svg><use href="#i-mail"/></svg></span><h3>Notifications</h3>
@@ -399,7 +399,7 @@ docker compose logs | grep "Setup code"
   <div class="wrap">
     <div class="head"><div class="eyebrow">Day to day</div><h2>What happens while you're not looking</h2></div>
     <div class="daily">
-      <div class="tile"><div class="big">12 h</div><h3>Scheduled check</h3><p>Renews certificates with fewer than 30 days left, then deploys to every router that doesn't have the current one. Both numbers are adjustable.</p></div>
+      <div class="tile"><div class="big">12 h</div><h3>Scheduled check</h3><p>Renews each certificate at a time Let's Encrypt suggests (about 30 days before expiry, or at once after a revocation), then deploys to every router that doesn't have the current one. Without a suggestion it renews 30 days before expiry. Both numbers are adjustable.</p></div>
       <div class="tile"><div class="big">1 e-mail</div><h3>Summary notifications</h3><p>One message per check: failures, expiry warnings (14 days by default) and renewals. The same error is sent at most once a day.</p></div>
       <div class="tile"><div class="big">30 days</div><h3>Password rotation</h3><p>Each router's service password is replaced automatically. A crash halfway through can't lock the app out.</p></div>
       <div class="tile"><div class="big">2 roles</div><h3>Admin and viewer</h3><p>Viewers see everything but can't change anything. The last admin can't be demoted or deleted.</p></div>

@@ -57,7 +57,13 @@ username and password of the first **admin** account. Then:
 3. **Devices → Enroll device**: enter the router address and an admin SSH login, confirm the device's
    SSH host key, review the changes, and enroll (see below). Use **Test** to check the connection; the certificate is deployed automatically.
 
-Every *check interval* (default 12h) the app renews certificates that have fewer than *renew days* (default 30) left. It then pushes them to every enabled router that doesn't have the current one.
+Every *check interval* (default 12h) the app asks Let's Encrypt when each certificate should be renewed
+([ACME Renewal Information](https://www.rfc-editor.org/rfc/rfc9773.html), ARI) and renews it at a random moment in the suggested
+window, usually about 30 days before expiry. If Let's Encrypt ever revokes a certificate or announces an incident, the window moves
+and the certificate is renewed at once. Renewals are sent as a replacement of the old certificate, which Let's Encrypt exempts from
+rate limits. When there is no suggestion (another CA, or Let's Encrypt can't be reached), the app renews certificates that have
+fewer than *renew days* (default 30) left, and always at the latest 7 days before expiry. It then pushes them to every enabled router
+that doesn't have the current one. The certificate list shows the planned renewal date.
 
 **Stopping and updating** (`docker stop`, Portainer "Update the stack") is a clean stop. New web requests are refused,
 a running renewal or deploy finishes the certificate or router it's working on, the rest runs at the next start, and

@@ -343,7 +343,23 @@ function certStatus(c) {
   if (c.lastError) return pill('err', 'Error') + `<div class="errtxt" title="${esc(c.lastError)}">${esc(c.lastError)}</div>`;
   if (!hasT(c.notAfter)) return pill('warn', 'Not issued yet');
   const d = daysLeft(c);
-  return d < 0 ? pill('err', 'Expired') : pill(d < S.settings.renewDays ? 'warn' : 'ok', d + ' days left');
+  return d < 0 ? pill('err', 'Expired') : pill(renewTime(c) <= Date.now() ? 'warn' : 'ok', d + ' days left');
+}
+// same rule as renewTime in acme.go: the time picked in the CA's renewal window (ARI),
+// at the latest 7 days (or renewDays, if fewer) before expiry; without ARI renewDays before expiry
+const hasARI = c => hasT(c.renewAt) && c.ariFor && c.ariFor === c.fingerprint;
+function renewTime(c) {
+  const exp = new Date(c.notAfter).getTime(), days = S.settings.renewDays;
+  if (!hasARI(c)) return exp - days * 864e5;
+  return Math.min(new Date(c.renewAt).getTime(), exp - Math.min(7, days) * 864e5);
+}
+function renewLine(c) {
+  if (!hasT(c.notAfter) || daysLeft(c) < 0) return '';
+  const t = renewTime(c), ari = hasARI(c);
+  const why = ari ? `Renewal window suggested by Let's Encrypt (ARI): ${date(c.ariStart)} – ${date(c.ariEnd)}`
+    : `Let's Encrypt gave no renewal window${c.ariError ? ' (' + c.ariError + ')' : ''}, so it renews ${S.settings.renewDays} days before expiry`;
+  const txt = t <= Date.now() ? 'renewing at the next check' : 'renews ' + date(new Date(t).toISOString());
+  return `<div class="sub" title="${esc(why)}">${txt}${ari ? ' · ARI' : ''}</div>`;
 }
 function routerStatus(r) {
   const c = S.certs.find(c => c.id === r.certId);
@@ -381,7 +397,7 @@ function render() {
   $('#certRows').innerHTML = S.certs.length ? S.certs.map(c => `<tr>
     <td class="main">${esc(c.name)}</td>
     ${cell('Domains', c.domains.map(esc).join('<br>') + dnsVia(c), 'small')}
-    ${cell('Expires', date(c.notAfter), 'small nw')}
+    ${cell('Expires', date(c.notAfter) + renewLine(c), 'small nw')}
     ${cell('Status', certStatus(c))}
     <td class="adm acts-cell"><div class="acts">
       ${hasT(c.notAfter) ? `<button data-act="exportCert" data-id="${c.id}">Export</button>` : ''}

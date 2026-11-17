@@ -86,6 +86,16 @@ type Cert struct {
 	NotAfter    time.Time `json:"notAfter,omitzero"`
 	LastAttempt time.Time `json:"lastAttempt,omitzero"`
 	LastError   string    `json:"lastError,omitempty"`
+
+	// ACME Renewal Information (RFC 9773): the CA's suggested renewal window for the
+	// certificate with fingerprint ARIFor, and the time picked in it.
+	ARIFor     string    `json:"ariFor,omitempty"`
+	ARIStart   time.Time `json:"ariStart,omitzero"`
+	ARIEnd     time.Time `json:"ariEnd,omitzero"`
+	RenewAt    time.Time `json:"renewAt,omitzero"`
+	ARINext    time.Time `json:"ariNext,omitzero"` // don't ask the CA again before this (Retry-After)
+	ARIExplain string    `json:"ariExplain,omitempty"`
+	ARIError   string    `json:"ariError,omitempty"`
 }
 
 // Router is an enrolled RouterOS device. After enrollment the app talks to it only via

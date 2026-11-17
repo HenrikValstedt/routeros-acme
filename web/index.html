@@ -137,7 +137,7 @@
       <div class="grid">
         <div><label>ACME account e-mail</label><input type="email" name="email" required></div>
         <div><label>Key type</label><select name="keyType"><option value="rsa2048">RSA 2048 (most compatible)</option><option value="rsa4096">RSA 4096</option><option value="ec256">ECDSA P-256</option><option value="ec384">ECDSA P-384</option></select></div>
-        <div><label>Renew when fewer than (days)</label><input type="number" name="renewDays" min="1" max="60"></div>
+        <div><label>Renew when fewer than (days)</label><input type="number" name="renewDays" min="1" max="60"><div class="hint">Only when Let's Encrypt suggests no renewal time (ARI). Normally it does.</div></div>
         <div><label>Check interval (hours)</label><input type="number" name="checkHours" min="1" max="168"></div>
         <div><label>DNS resolvers for propagation check</label><input type="text" name="dnsResolvers" placeholder="1.1.1.1, 8.8.8.8 (optional)"></div>
       </div>
