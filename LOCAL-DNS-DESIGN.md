@@ -58,10 +58,10 @@ locally. A static record also overrides a public name for clients that use the r
 
 ## Consequence for the wildcard option
 
-A wildcard *certificate* doesn't need a wildcard *DNS record*. Proposal: records are always
-exact names (the device's DNS name, chosen at enrollment or on the device), also when the
-certificate is a wildcard. A wildcard DNS record would only be offered with a clear warning,
-and only if no other records exist under it. To decide with the product owner.
+A wildcard *certificate* doesn't need a wildcard *DNS record*. **Decided (2026-11-17):**
+records are always exact names (the device's DNS name, chosen at enrollment or on the
+device), also when the certificate is a wildcard. A wildcard DNS record is only offered with
+a clear warning, and only if no other records exist under it.
 
 ## Open questions
 
