@@ -68,6 +68,12 @@ a clear warning, and only if no other records exist under it.
 - ~~Which routers are DNS servers?~~ **Decided (2026-11-17):** a separate **DNS servers** tab.
   There you either point to a device that's already enrolled, or add a new one (the same
   enrollment, but the device doesn't need a certificate of its own).
-- Several DNS routers: write to all of them, or per device a choice?
+- ~~Several DNS routers?~~ **Decided (2026-11-17):** records go to **all** DNS servers by
+  default; the setup dialog for a device's record lets you untick servers it shouldn't go to.
+  Setups with a primary that syncs its records to the resolvers (like the product owner's:
+  a non-resolving primary, synced every 5 minutes) simply add only the primary as a DNS
+  server. Worth a line in the docs: then a change reaches clients within sync interval + TTL
+  (about 10 minutes there), and the resolvers shouldn't be added as DNS servers too, because
+  the synced copies carry the app's comment and would look like the app's own records.
 - Address source: chosen interfaces, or fixed addresses typed in, or both?
 - Should the app also offer the record for devices without a certificate (just names)?
