@@ -68,6 +68,32 @@ records are always exact names (the device's DNS name, chosen at enrollment or o
 device), also when the certificate is a wildcard. A wildcard DNS record is only offered with
 a clear warning, and only if no other records exist under it.
 
+## Resolver check (built on dev, 2026-11-17)
+
+For a DNS server that copies its records to resolvers (the product owner's setup: a primary
+that isn't a resolver, synced to the resolvers every 5 minutes), the DNS tab takes a list of
+resolver addresses and a grace period (default 10 minutes, per server). After each change the
+app asks the resolvers directly over DNS whether the records arrived and removed addresses are
+gone:
+
+- all there: green, "✓ on all resolvers";
+- not yet, within the grace period: yellow, "copying to the resolvers (3 of 10 min)";
+- still not after it: red, "not on all resolvers" with what is wrong where, an e-mail
+  (follows *Renewal failed or needed early*) and a log line;
+- a resolver that loses a record later gets its own grace period.
+
+A watcher checks every minute while copying (every 5 while late), so red shows within the
+grace period plus a minute. The app's container must be allowed to send DNS queries to the
+resolvers.
+
+## Two installations on one DNS server
+
+Records carry the installation's id: `RouterOS ACME dns:<installation>/<device>`. An
+installation only manages its own records; another installation's records are left alone, and
+a name both want is a conflict. (Found in testing: before the id, a second installation deleted
+the first one's records as "no longer wanted".) Records without an id, from earlier dev builds,
+are taken over by the first installation that sees them.
+
 ## Open questions (all answered)
 
 - ~~Which routers are DNS servers?~~ **Decided (2026-11-17):** a separate **DNS servers** tab.
