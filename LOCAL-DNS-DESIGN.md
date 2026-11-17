@@ -75,5 +75,9 @@ a clear warning, and only if no other records exist under it.
   server. Worth a line in the docs: then a change reaches clients within sync interval + TTL
   (about 10 minutes there), and the resolvers shouldn't be added as DNS servers too, because
   the synced copies carry the app's comment and would look like the app's own records.
-- Address source: chosen interfaces, or fixed addresses typed in, or both?
+- ~~Address source?~~ **Decided (2026-11-17):** the dialog lists the device's addresses with
+  their interface names (read live from the device, IPv4 and IPv6; loopback and link-local
+  hidden, DHCP addresses marked), and several can be ticked. The choice is stored per
+  interface and family, so when the address on that interface changes (e.g. DHCP), the
+  record follows.
 - Should the app also offer the record for devices without a certificate (just names)?
