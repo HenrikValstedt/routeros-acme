@@ -140,12 +140,22 @@ type Router struct {
 	LastError  string    `json:"lastError,omitempty"`
 	Version    string    `json:"version,omitempty"`
 
+	// Manual: not a MikroTik device (a NAS, printer, server): no enrollment and no deploy.
+	// Its certificate is installed by the user (Export), its DNS addresses are typed in.
+	Manual bool `json:"manual,omitempty"`
+	// DNS is the local DNS record for this device, written to the DNS servers (localdns.go).
+	DNS *DNSRecord `json:"dns,omitempty"`
+	// Addresses are the device's own addresses, as last read from it (to follow changes).
+	Addresses []DevAddr `json:"addresses,omitempty"`
+
 	// legacy (SSH-password mode before enrollment existed) – wiped on load
 	LegacyPassword string `json:"password,omitempty"`
 	LegacyKey      string `json:"privateKey,omitempty"`
 }
 
-func (r *Router) enrolled() bool { return r.ServiceUser != "" && r.Secret != "" && len(r.Pins) > 0 }
+func (r *Router) enrolled() bool {
+	return !r.Manual && r.ServiceUser != "" && r.Secret != "" && len(r.Pins) > 0
+}
 
 // User is a web UI account.
 type User struct {
@@ -177,6 +187,17 @@ type Config struct {
 	Mail     MailSettings  `json:"mail"`
 	DNS      []*DNSAccount `json:"dnsAccounts"`
 	Tokens   []*Token      `json:"tokens"`
+	// DNSServers are enrolled devices that get the devices' local DNS records.
+	DNSServers []*DNSServer `json:"dnsServers,omitempty"`
+}
+
+func (c Config) dnsServer(routerID string) *DNSServer {
+	for _, x := range c.DNSServers {
+		if x.RouterID == routerID {
+			return x
+		}
+	}
+	return nil
 }
 
 // pruneTokens drops expired tokens.
@@ -368,13 +389,30 @@ func (s *Store) Read(fn func(*Config)) {
 }
 
 // Update mutates the config under lock and persists it if fn returns nil.
+// Update changes the config. fn works on a copy that replaces the config only when fn
+// succeeds and the result is saved: a change that fails halfway leaves nothing behind
+// (before, it stayed in memory and was written with the next successful change).
 func (s *Store) Update(fn func(*Config) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := fn(&s.cfg); err != nil {
+	b, err := json.Marshal(&s.cfg)
+	if err != nil {
 		return err
 	}
-	return s.save()
+	var c Config
+	if err := json.Unmarshal(b, &c); err != nil {
+		return err
+	}
+	if err := fn(&c); err != nil {
+		return err
+	}
+	old := s.cfg
+	s.cfg = c
+	if err := s.save(); err != nil {
+		s.cfg = old
+		return err
+	}
+	return nil
 }
 
 func newID() string {

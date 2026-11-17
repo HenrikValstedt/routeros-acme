@@ -366,13 +366,19 @@ function renewLine(c) {
 }
 function routerStatus(r) {
   const c = S.certs.find(c => c.id === r.certId);
+  if (r.manual) return pill('muted', 'Manual') + dnsLine(r);
   let s = !r.enrolled ? pill('warn', 'Not enrolled')
     : !r.enabled ? pill('muted', 'Disabled')
     : !c ? pill('muted', 'No certificate')
     : c.fingerprint && r.deployedFingerprint === c.fingerprint ? pill('ok', 'Up to date')
     : pill('warn', 'Pending');
   if (r.lastError) s += `<div class="errtxt" title="${esc(r.lastError)}">${esc(r.lastError)}</div>`;
-  return s;
+  return s + dnsLine(r);
+}
+function dnsLine(r) {
+  if (!r.dns) return '';
+  if (r.dns.error) return `<div class="errtxt" title="${esc(r.dns.error)}">DNS ${esc(r.dns.name)}: ${esc(r.dns.error)}</div>`;
+  return `<div class="sub" title="${esc((r.dns.addrs || []).join(', '))}">DNS ${esc(r.dns.name)}${hasT(r.dns.synced) ? ' ✓' : ' (waiting for the next check)'}</div>`;
 }
 const isUpToDate = r => { const c = S.certs.find(c => c.id === r.certId); return r.enrolled && c?.fingerprint && r.deployedFingerprint === c.fingerprint; };
 function renderStats() {
@@ -395,6 +401,7 @@ function render() {
   $('#statusTxt').textContent = S.busy ? 'Working…' : 'Idle';
   renderStats();
   renderDNS();
+  renderDNSServers();
   $('#proxyHint').hidden = !S.proxyHint;
   $('#proxyHint').innerHTML = S.proxyHint ? `<b>Reverse proxy not trusted.</b> ${esc(S.proxyHint)}` : '';
   $('#certRows').innerHTML = S.certs.length ? S.certs.map(c => `<tr>
@@ -411,12 +418,14 @@ function render() {
     const c = S.certs.find(c => c.id === r.certId);
     return `<tr>
     <td class="main">${esc(r.name)}<div class="sub">${[r.board, r.version && 'RouterOS ' + r.version].filter(Boolean).map(esc).join(' · ')}</div></td>
-    ${cell('Connection', esc(r.host) + (r.enrolled ? `<div><span class="lockline" title="api-ssl with pinned certificate, service account ${esc(r.serviceUser)}">${icon('lock')}api-ssl :${r.apiPort}</span></div>` : ''), 'small')}
+    ${cell('Connection', r.manual ? '<span class="muted">Manual: install via Export</span>' : esc(r.host) + (r.enrolled ? `<div><span class="lockline" title="api-ssl with pinned certificate, service account ${esc(r.serviceUser)}">${icon('lock')}api-ssl :${r.apiPort}</span></div>` : ''), 'small')}
     ${cell('Certificate', (c ? esc(c.name) : '—') + (c && r.services?.length ? `<div class="muted">${r.services.map(esc).join(', ')}</div>` : ''), 'small')}
     ${cell('Last deploy', `<span title="${hasT(r.lastDeploy) ? fmt(r.lastDeploy) : ''}">${rel(r.lastDeploy)}</span>`, 'small nw')}
     ${cell('Status', routerStatus(r))}
     <td class="adm acts-cell"><div class="acts">
-      ${r.enrolled ? `<button data-act="testDevice" data-id="${r.id}">Test</button>
+      ${r.manual ? `<button data-act="editRouter" data-id="${r.id}">Edit</button>
+      <button class="del" data-act="delRouter" data-id="${r.id}">Remove</button>`
+      : r.enrolled ? `<button data-act="testDevice" data-id="${r.id}">Test</button>
       <button data-act="deployDevice" data-id="${r.id}">Deploy</button>
       <button data-act="editRouter" data-id="${r.id}">Edit</button>`
       : `<button class="pri" data-act="enrollWizard" data-id="${r.id}">Enroll</button>
@@ -719,14 +728,21 @@ function certOptions() {
     S.certs.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join(''));
 }
 const ago = t => hasT(t) ? fmt(t) : '—';
-function editRouter(id) {
-  const r = S.routers.find(r => r.id === id), f = $('#rtForm');
-  certOptions();
-  $('#rtTitle').textContent = 'Device: ' + r.name;
-  f.id.value = r.id; f.name.value = r.name; f.certId.value = r.certId || '';
-  f.extraCommands.value = r.extraCommands || ''; f.enabled.checked = !!r.enabled;
-  f.querySelectorAll('[name=svc]').forEach(cb => cb.checked = (r.services || []).includes(cb.value));
-  $('#rtInfo').innerHTML = `<b>🔒 Secure connection</b><dl class="kv u-mt6">
+function editRouter(id) { openDevice(S.routers.find(r => r.id === id)); }
+function addManual() { openDevice({manual: true, name: '', certId: ''}); }
+let rtCur = null, rtAddrsLoaded = false;
+function openDevice(r) {
+  const f = $('#rtForm'), manual = !!r.manual, isNew = !r.id;
+  rtCur = r; rtAddrsLoaded = false;
+  f.reset(); certOptions();
+  $('#rtTitle').textContent = isNew ? 'Add manual device' : (manual ? 'Manual device: ' : 'Device: ') + r.name;
+  f.id.value = r.id || ''; f.name.value = r.name || ''; f.certId.value = r.certId || '';
+  $('#rtDeploy').hidden = manual; $('#rtManualInfo').hidden = !manual; $('#rtInfo').hidden = manual;
+  $('#rotBtn').hidden = manual; $('#reBtn').hidden = manual; $('#rmBtn').hidden = isNew;
+  if (!manual) {
+    f.extraCommands.value = r.extraCommands || ''; f.enabled.checked = !!r.enabled;
+    f.querySelectorAll('[name=svc]').forEach(cb => cb.checked = (r.services || []).includes(cb.value));
+    $('#rtInfo').innerHTML = `<b>🔒 Secure connection</b><dl class="kv u-mt6">
     <dt>Address</dt><dd>${esc(r.host)} – api-ssl port ${r.apiPort}</dd>
     <dt>Service account</dt><dd>${esc(r.serviceUser)}, login only from ${esc(r.allowedFrom || 'any address')}</dd>
     <dt>Password</dt><dd>random, known only to this app · last rotated ${ago(r.rotatedAt)}</dd>
@@ -734,16 +750,87 @@ function editRouter(id) {
     <dt>SSH host key</dt><dd class="mono">${esc(r.sshHostKey)}</dd>
     <dt>Enrolled</dt><dd>${ago(r.enrolledAt)} by ${esc(r.enrolledBy)}</dd>
     <dt>Last seen</dt><dd>${ago(r.lastSeen)}</dd></dl>`;
-  $('#rotBtn').onclick = () => act('POST', `/api/routers/${r.id}/rotate`, 'Password rotation started – see Log');
-  $('#reBtn').onclick = () => { rtDlg.close(); enrollWizard(r.id); };
+    $('#rotBtn').onclick = () => act('POST', `/api/routers/${r.id}/rotate`, 'Password rotation started – see Log');
+    $('#reBtn').onclick = () => { rtDlg.close(); enrollWizard(r.id); };
+  }
   $('#rmBtn').onclick = () => { rtDlg.close(); delRouter(r.id); };
+  // local DNS record
+  f.dnsOn.checked = !!r.dns; f.dnsName.value = r.dns?.name || '';
+  $('#rtStatic').hidden = !manual; $('#rtAddrs').hidden = manual;
+  f.dnsStatic.value = (r.dns?.static || []).join('\n');
+  $('#rtSrvs').innerHTML = (S.dnsServers || []).length ? S.dnsServers.map(s => {
+    const d = S.routers.find(x => x.id === s.routerId);
+    return `<label class="inl"><input type="checkbox" name="srv" value="${esc(s.routerId)}" ${(r.dns?.skip || []).includes(s.routerId) ? '' : 'checked'}> ${esc(d?.name || s.routerId)}</label>`;
+  }).join('') : '<span class="small">No DNS servers yet. Add one under <b>DNS</b>; the record is written as soon as there is one.</span>';
+  dnsToggle();
   rtDlg.showModal();
 }
+// a name for the record: the FQDN the device was enrolled with, else the certificate's only
+// exact name (one device per certificate), else the device name in the certificate's domain
+function dnsSuggest(r, certId) {
+  const host = (r.host || '').trim().toLowerCase().replace(/\.$/, '');
+  if (/[a-z]/.test(host) && host.includes('.') && !host.includes(':')) return host;
+  const name = (r.name || '').trim().toLowerCase();
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(name) && /[a-z]/.test(name)) return name;
+  const c = S.certs.find(c => c.id === certId), doms = c?.domains || [];
+  const exact = doms.filter(d => !d.startsWith('*.'));
+  if (exact.length === 1) return exact[0];
+  const base = doms.map(d => d.replace(/^\*\./, '')).sort((a, b) => a.length - b.length)[0];
+  const label = name.replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  return base && label ? label + '.' + base : '';
+}
+const certCovers = (c, n) => (c?.domains || []).some(d => d === n || (d.startsWith('*.') && n.endsWith(d.slice(1)) && !n.slice(0, n.length - d.length + 1).includes('.')));
+function dnsHint() {
+  const f = $('#rtForm'), n = f.dnsName.value.trim().toLowerCase().replace(/\.$/, ''), c = S.certs.find(c => c.id === f.certId.value);
+  $('#rtDnsHint').innerHTML = !n ? 'An exact name, like gw.example.com.'
+    : !c ? 'No certificate selected: browsers will warn on https to this name.'
+    : certCovers(c, n) ? `✓ Covered by certificate <b>${esc(c.name)}</b>, so https to this name works without a warning.`
+    : `⚠ Not covered by certificate <b>${esc(c.name)}</b> (${c.domains.map(esc).join(', ')}): browsers will warn on https to this name.`;
+}
+async function dnsToggle() {
+  const f = $('#rtForm'), r = rtCur, on = f.dnsOn.checked;
+  $('#rtDns').hidden = !on;
+  if (!on) return;
+  if (!f.dnsName.value) f.dnsName.value = dnsSuggest(r, f.certId.value);
+  dnsHint();
+  if (r.manual || rtAddrsLoaded) return;
+  rtAddrsLoaded = true;
+  const box = $('#rtAddrs');
+  let list = r.addresses || [], note = '';
+  if (r.enrolled) {
+    box.innerHTML = '<span class="small">Reading the device\'s addresses…</span>';
+    try { list = await api('POST', `/api/routers/${r.id}/addresses`); }
+    catch (e) { note = `<div class="small errtxt">Can't reach the device (${esc(e.message)}). Showing the last known addresses.</div>`; }
+  }
+  let picks = r.dns?.picks || [];
+  if (!r.dns) { // first time: suggest the interface of the address the app uses to reach the device
+    const own = list.find(a => a.address === r.host);
+    picks = own ? [{interface: own.interface, family: own.family}] : [];
+  }
+  const groups = new Map();
+  for (const a of list) { const k = a.interface + '|' + a.family; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
+  for (const p of picks) { const k = p.interface + '|' + p.family; if (!groups.has(k)) groups.set(k, []); }
+  box.innerHTML = note + ([...groups].map(([k, as]) => {
+    const [ifc, fam] = k.split('|'), on = picks.some(p => p.interface === ifc && p.family === +fam);
+    const tag = as.some(a => a.dynamic) ? `<span class="tag">${fam === '4' ? 'DHCP' : 'auto: DHCPv6/SLAAC'}</span>` : '';
+    const addrs = as.length ? `<span class="mono">${as.map(a => esc(a.address)).join(', ')}</span>` : '<span class="muted">no address right now</span>';
+    return `<label class="inl"><input type="checkbox" name="pick" value="${esc(k)}" ${on ? 'checked' : ''}> ${addrs} on <b>${esc(ifc)}</b> <span class="muted">IPv${fam}</span> ${tag}</label>`;
+  }).join('') || '<span class="small">No addresses found on the device.</span>');
+}
+$('#rtForm').dnsOn.addEventListener('change', dnsToggle);
+$('#rtForm').dnsName.addEventListener('input', dnsHint);
+$('#rtForm').certId.addEventListener('change', () => { if (!$('#rtDns').hidden) dnsHint(); });
 $('#rtForm').onsubmit = async e => {
   e.preventDefault(); const f = e.target;
-  const body = {id: f.id.value, name: f.name.value, certId: f.certId.value, extraCommands: f.extraCommands.value,
-    enabled: f.enabled.checked, services: [...f.querySelectorAll('[name=svc]:checked')].map(c => c.value)};
-  if (await act('POST', '/api/routers', 'Device saved', body)) rtDlg.close();
+  const dns = !f.dnsOn.checked ? null : {
+    name: f.dnsName.value.trim(),
+    picks: [...f.querySelectorAll('[name=pick]:checked')].map(c => { const [i, fam] = c.value.split('|'); return {interface: i, family: +fam}; }),
+    static: f.dnsStatic.value.split(/[\s,]+/).filter(Boolean),
+    skip: [...f.querySelectorAll('[name=srv]')].filter(c => !c.checked).map(c => c.value)};
+  const body = {id: f.id.value, name: f.name.value, certId: f.certId.value, manual: !!rtCur?.manual, dns,
+    extraCommands: f.extraCommands.value, enabled: f.enabled.checked,
+    services: [...f.querySelectorAll('[name=svc]:checked')].map(c => c.value)};
+  if (await act('POST', '/api/routers', f.id.value ? 'Device saved' : 'Manual device added', body)) rtDlg.close();
 };
 async function testDevice(id) {
   toast('Connecting…');
@@ -835,6 +922,42 @@ $('#enrForm').onsubmit = async e => {
   } catch (err) { toast(err.message, true); }
   finally { btn.disabled = false; if (enrCur !== 3) btn.textContent = enrCur === 1 ? 'Connect' : 'Enroll device'; }
 };
+
+// ---------- DNS servers ----------
+function renderDNSServers() {
+  const list = S.dnsServers || [];
+  $('#dnsSrvRows').innerHTML = list.length ? list.map(s => {
+    const r = S.routers.find(x => x.id === s.routerId) || {name: '(removed device)'};
+    const st = s.lastError ? pill('err', 'Error') + `<div class="errtxt" title="${esc(s.lastError)}">${esc(s.lastError)}</div>`
+      : s.conflicts?.length ? pill('warn', s.conflicts.length + (s.conflicts.length === 1 ? ' conflict' : ' conflicts'))
+        + s.conflicts.map(c => `<div class="errtxt" title="${esc(c)}">${esc(c)}</div>`).join('')
+      : hasT(s.lastSync) ? pill('ok', 'In sync') : pill('muted', 'Waiting for the next check');
+    return `<tr><td class="main">${esc(r.name)}<div class="sub">${esc(r.board || '')}</div></td>
+      ${cell('Connection', esc(r.host || ''), 'small')}
+      ${cell('Records', String(s.records ?? 0), 'small')}
+      ${cell('Last sync', `<span title="${hasT(s.lastSync) ? fmt(s.lastSync) : ''}">${rel(s.lastSync)}</span>`, 'small nw')}
+      ${cell('Status', st)}
+      <td class="adm acts-cell"><div class="acts"><button class="del" data-act="removeDNSServer" data-id="${s.routerId}">Remove</button></div></td></tr>`;
+  }).join('') : emptyRow(6, 'globe', 'No DNS servers yet.<div class="small">Use <b>Add DNS server</b> to pick a router that serves DNS to your LAN.</div>');
+}
+function addDNSServer() {
+  const used = new Set((S.dnsServers || []).map(s => s.routerId));
+  const opts = S.routers.filter(r => r.enrolled && !used.has(r.id));
+  $('#dnsSrvSel').innerHTML = opts.length ? opts.map(r => `<option value="${r.id}">${esc(r.name)} (${esc(r.host)})</option>`).join('')
+    : '<option value="">No enrolled device left to add</option>';
+  dnsSrvDlg.showModal();
+}
+$('#dnsSrvForm').onsubmit = async e => {
+  e.preventDefault();
+  const id = e.target.routerId.value;
+  if (!id) { toast('Enroll the device first', true); return; }
+  if (await act('POST', '/api/dns-servers', 'DNS server added – records are written at the check that runs now', {routerId: id})) dnsSrvDlg.close();
+};
+function removeDNSServer(id) {
+  const r = S.routers.find(x => x.id === id);
+  if (confirm(`Stop using ${r ? r.name : 'this device'} as DNS server? The app's DNS records are removed from it; other records stay.`))
+    act('DELETE', '/api/dns-servers/' + id, 'DNS server removed – its records are being removed');
+}
 
 // remove
 function delRouter(id) {
@@ -929,6 +1052,10 @@ const actions = {
   testDevice: el => testDevice(el.dataset.id),
   deployDevice: el => act('POST', `/api/routers/${el.dataset.id}/deploy`, 'Deploy started'),
   editRouter: el => editRouter(el.dataset.id),
+  addManual: () => addManual(),
+  addDNSServer: () => addDNSServer(),
+  removeDNSServer: el => removeDNSServer(el.dataset.id),
+  enrollForDNS: () => { dnsSrvDlg.close(); enrollWizard(); },
   delRouter: el => delRouter(el.dataset.id),
   inviteUser: () => inviteUser(),
   editUser: el => editUser(el.dataset.id),

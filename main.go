@@ -383,6 +383,9 @@ func (a *app) routes() http.Handler {
 		})
 		writeJSON(w, "queued")
 	})
+	adm("POST /api/routers/{id}/addresses", a.deviceAddressesAPI)
+	adm("POST /api/dns-servers", a.stepUp(a.addDNSServer))
+	adm("DELETE /api/dns-servers/{id}", a.stepUp(a.removeDNSServer))
 	adm("POST /api/devices/probe", a.probeDevice)
 	adm("POST /api/devices/enroll", a.stepUp(a.enrollDevice))
 	adm("GET /api/users", a.listUsers)
@@ -499,7 +502,7 @@ func (a *app) getState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"security": security, "settings": sv, "certs": cfg.Certs, "routers": routers, "mail": mailViewOf(cfg.Mail),
 		"dnsAccounts": dnsViews(cfg), "dnsRoutes": certRoutes(cfg), "dnsProviders": dnsProviders,
-		"busy": a.mgr.Busy(), "now": time.Now(), "me": viewOf(currentUser(r)), "version": version,
+		"dnsServers": cfg.DNSServers, "busy": a.mgr.Busy(), "now": time.Now(), "me": viewOf(currentUser(r)), "version": version,
 		"myPasskeys": passkeyViews(currentUser(r)), "proxyHint": a.proxy.proxyHint(r),
 	})
 }
@@ -647,26 +650,50 @@ func (a *app) saveRouter(w http.ResponseWriter, r *http.Request) {
 			svcs = append(svcs, s)
 		}
 	}
-	// Extra commands run on the router at the next deploy, like enrolling a device:
-	// changing them needs a fresh 2FA code or passkey.
-	if old := a.store.Snapshot().router(in.ID); old != nil && strings.TrimSpace(old.ExtraCmds) != strings.TrimSpace(in.ExtraCmds) && !a.requireFresh(w, r) {
+	// Extra commands run on the router at the next deploy, like enrolling a device, and a
+	// DNS record decides where a name points on the LAN: changing either needs a fresh 2FA
+	// code or passkey.
+	old := a.store.Snapshot().router(in.ID)
+	sensitive := old != nil && strings.TrimSpace(old.ExtraCmds) != strings.TrimSpace(in.ExtraCmds)
+	sensitive = sensitive || (old == nil && in.DNS != nil) || (old != nil && !sameDNSSetup(old.DNS, in.DNS))
+	if sensitive && !a.requireFresh(w, r) {
 		return
 	}
+	created := false
 	err := a.store.Update(func(c *Config) error {
 		if in.CertID != "" && c.cert(in.CertID) == nil {
 			return errors.New("unknown certificate")
 		}
 		x := c.router(in.ID)
+		if x == nil && in.ID == "" && in.Manual { // a new manual (non-MikroTik) device
+			if strings.TrimSpace(in.Name) == "" {
+				return errors.New("enter a name")
+			}
+			x = &Router{ID: newID(), Manual: true, Enabled: true}
+			c.Routers = append(c.Routers, x)
+			created = true
+		}
 		if x == nil {
 			return errors.New("not found")
 		}
 		if n := strings.TrimSpace(in.Name); n != "" {
 			x.Name = n
 		}
-		x.Enabled, x.CertID, x.Services, x.ExtraCmds = in.Enabled, in.CertID, svcs, in.ExtraCmds
-		x.DeployedFP = "" // settings changed: push again on next check
+		d, err := cleanDNS(c, x, in.DNS)
+		if err != nil {
+			return err
+		}
+		x.DNS = d
+		x.CertID = in.CertID
+		if !x.Manual {
+			x.Enabled, x.Services, x.ExtraCmds = in.Enabled, svcs, in.ExtraCmds
+			x.DeployedFP = "" // settings changed: push again on next check
+		}
 		return nil
 	})
+	if err == nil && created {
+		a.mgr.logf("manual device %q added by %s", in.Name, currentUser(r).Username)
+	}
 	if err != nil {
 		fail(w, 400, err)
 		return
@@ -686,6 +713,13 @@ func (a *app) deleteRouter(w http.ResponseWriter, r *http.Request) {
 	dev := a.store.Snapshot().router(id)
 	if dev == nil {
 		fail(w, 404, errors.New("not found"))
+		return
+	}
+	if a.store.Snapshot().dnsServer(id) != nil {
+		if in.Cleanup != nil {
+			in.Cleanup.wipe()
+		}
+		fail(w, 400, errors.New("this device is a DNS server: remove it under DNS servers first (that also removes the app's DNS records from it)"))
 		return
 	}
 	if in.Cleanup != nil && !a.requireFresh(w, r) {
@@ -844,6 +878,10 @@ func (a *app) enrollDevice(w http.ResponseWriter, r *http.Request) {
 			x.Name = nr.Host
 		}
 		x.Enabled, x.CertID, x.Services, x.ExtraCmds = in.Enabled, in.CertID, svcs, in.ExtraCmds
+		x.DNS, x.Addresses = keep.DNS, keep.Addresses // re-enrolling keeps the local DNS record
+		if keep.Manual {
+			x.DNS = nil // a manual device enrolled as MikroTik: its typed-in addresses no longer apply
+		}
 		return nil
 	})
 	if err != nil {

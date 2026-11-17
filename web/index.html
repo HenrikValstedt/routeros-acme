@@ -14,6 +14,7 @@
 <svg class="u-abs" width="0" height="0" aria-hidden="true">
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></symbol>
   <symbol id="i-cert" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M7 8h10M7 11h6"/><circle cx="16" cy="17" r="3"/><path d="M14.5 19.5L14 22l2-1 2 1-.5-2.5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18"/></symbol>
   <symbol id="i-router" viewBox="0 0 24 24"><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h.01M11 16.5h.01M17 13V9M8.5 8.5a5 5 0 017 0M6 6a8.5 8.5 0 0112 0"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0113 0M16 4.5a3.5 3.5 0 010 7M18 14a5.5 5.5 0 013.5 6"/></symbol>
@@ -113,6 +114,7 @@
 <nav id="tabs">
   <button data-t="certs" class="on"><svg class="i"><use href="#i-cert"/></svg><span>Certificates</span></button>
   <button data-t="routers"><svg class="i"><use href="#i-router"/></svg><span>Devices</span></button>
+  <button data-t="dns"><svg class="i"><use href="#i-globe"/></svg><span>DNS</span></button>
   <button data-t="settings"><svg class="i"><use href="#i-gear"/></svg><span>Settings</span></button>
   <button data-t="users" class="adm"><svg class="i"><use href="#i-users"/></svg><span>Users</span></button>
   <button data-t="log"><svg class="i"><use href="#i-log"/></svg><span>Log</span></button>
@@ -125,9 +127,27 @@
     <div class="card flush"><div class="tw"><table class="rt"><thead><tr><th>Name</th><th>Domains</th><th>Expires</th><th>Status</th><th class="adm"></th></tr></thead><tbody id="certRows"></tbody></table></div></div>
   </section>
   <section id="t-routers" hidden>
-    <div class="ph"><div><h2>Devices</h2><p>MikroTik routers managed over the encrypted API.</p></div>
-      <button class="pri adm" data-act="enrollWizard"><svg class="i"><use href="#i-plus"/></svg>Enroll device</button></div>
+    <div class="ph"><div><h2>Devices</h2><p>MikroTik routers managed over the encrypted API, and other devices you manage by hand.</p></div>
+      <div class="u-flex u-gap8"><button class="adm" data-act="addManual"><svg class="i"><use href="#i-plus"/></svg>Add manual device</button>
+      <button class="pri adm" data-act="enrollWizard"><svg class="i"><use href="#i-plus"/></svg>Enroll device</button></div></div>
     <div class="card flush"><div class="tw"><table class="rt"><thead><tr><th>Device</th><th>Connection</th><th>Certificate</th><th>Last deploy</th><th>Status</th><th class="adm"></th></tr></thead><tbody id="routerRows"></tbody></table></div></div>
+  </section>
+  <section id="t-dns" hidden>
+    <div class="ph"><div><h2>DNS servers</h2><p>Routers that get your devices' local DNS records, so their certificate names work on the LAN.</p></div>
+      <button class="pri adm" data-act="addDNSServer"><svg class="i"><use href="#i-plus"/></svg>Add DNS server</button></div>
+    <div class="card flush"><div class="tw"><table class="rt"><thead><tr><th>DNS server</th><th>Connection</th><th>Records</th><th>Last sync</th><th>Status</th><th class="adm"></th></tr></thead><tbody id="dnsSrvRows"></tbody></table></div></div>
+    <div class="info">
+      <b>How it works.</b> Give a device a DNS name and addresses under <b>Devices → Edit → Local DNS record</b>. The app writes the
+      records to every DNS server here (unless you untick one for that device), keeps them up to date when a device's address changes,
+      and removes them with the device. It only ever changes records it made itself. If a record by someone else exists for the
+      name, or a wildcard record covers it, nothing is written for that name and the conflict is shown.
+      <ul>
+        <li><b>Clients that use their own DNS don't see these records:</b> browsers with "secure DNS" (DNS over HTTPS) turned on,
+          some phones, and devices with a fixed DNS server. They get the public answer, or none.</li>
+        <li>If your DNS routers copy records from a primary to the resolvers, add only the primary here. A change then reaches
+          clients within your sync interval plus 5 minutes.</li>
+      </ul>
+    </div>
   </section>
   <section id="t-settings" hidden>
     <div class="ph"><div><h2>Settings</h2><p>Certificate authority, DNS provider and e-mail.</p></div></div>
@@ -264,15 +284,38 @@
     <div><label>Name</label><input type="text" name="name"></div>
     <div><label>Certificate</label><select name="certId" class="certSel"></select></div>
   </div>
+  <div id="rtDeploy">
   <label>Assign certificate to</label>
   <label class="inl"><input type="checkbox" name="svc" value="www-ssl"> www-ssl (WebFig)</label>
   <label class="inl"><input type="checkbox" name="svc" value="api-ssl"> api-ssl</label>
   <label>Extra commands</label>
   <textarea name="extraCommands" placeholder="# RouterOS script, {{cert}} = certificate name on the device&#10;/interface sstp-server server set certificate={{cert}}&#10;/ip hotspot profile set [find] ssl-certificate={{cert}}"></textarea>
   <label class="inl u-mt12"><input type="checkbox" name="enabled"> Enabled (deploy automatically)</label>
+  </div>
+  <div class="info" id="rtManualInfo" hidden><b>Manual device.</b> Nothing is deployed to it: install its certificate yourself with
+    <b>Certificates → Export</b>, and again after each renewal (the <i>Certificate renewed</i> e-mail reminds you).</div>
+  <label class="inl u-mt12"><input type="checkbox" name="dnsOn"> Local DNS record</label>
+  <div id="rtDns" hidden>
+    <div><label>DNS name</label><input type="text" name="dnsName" placeholder="gw.example.com"><div class="hint" id="rtDnsHint"></div></div>
+    <label>Addresses</label>
+    <div id="rtAddrs" class="addrlist"></div>
+    <textarea name="dnsStatic" id="rtStatic" hidden placeholder="One address per line, IPv4 or IPv6&#10;192.168.10.20"></textarea>
+    <label>Write to DNS servers</label>
+    <div id="rtSrvs"></div>
+  </div>
   <div class="info lock" id="rtInfo"></div>
   <div class="acts"><button type="button" id="rotBtn">Rotate password</button><button type="button" id="reBtn">Re-enroll</button><button type="button" class="del" id="rmBtn">Remove device</button></div>
   <div class="foot"><button type="button" data-act="closeDialog">Cancel</button><button class="pri" value="save">Save</button></div>
+</form></dialog>
+
+<dialog id="dnsSrvDlg" class="sm"><form method="dialog" id="dnsSrvForm">
+  <h3>Add DNS server</h3>
+  <p class="small">Pick a router that serves DNS to your LAN. It must be enrolled; it doesn't need a certificate of its own.</p>
+  <label>Device</label><select name="routerId" id="dnsSrvSel"></select>
+  <div class="hint">Not in the list? Enroll it first, then add it here. <button type="button" class="u-mt6" data-act="enrollForDNS">Enroll a new device</button></div>
+  <div class="info">The app adds A/AAAA records with the comment <span class="mono">RouterOS ACME dns:…</span> and a 5-minute TTL,
+    and never changes other records. This needs a fresh 2FA code.</div>
+  <div class="foot"><button type="button" data-act="closeDialog">Cancel</button><button class="pri">Add DNS server</button></div>
 </form></dialog>
 
 <dialog id="enrDlg"><form method="dialog" id="enrForm">

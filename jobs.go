@@ -148,6 +148,7 @@ func (m *Manager) cycle() {
 		m.issue(c.ID)
 	}
 	m.deployOutdated()
+	m.syncDNS()
 	m.rotateDue()
 	m.checkExpiry()
 	m.logf("check done")

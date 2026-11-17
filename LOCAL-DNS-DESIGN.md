@@ -1,11 +1,16 @@
-# Local DNS records — design note (draft, not built)
+# Local DNS records — design note
 
 Idea: when a device gets a certificate, the app can also create the matching DNS record on
 the routers that serve DNS to the LAN, so `https://gw.example.com` works inside the network
 without a certificate warning. A plain IP address doesn't work well with TLS: a certificate is
 for a *name*, and Let's Encrypt can't issue one for a private LAN address at all.
 
-Status: idea + tests on RouterOS 7.25.1 (CHR). Nothing in the app yet.
+Status: **built on the dev branch** (not released). Code in `localdns.go`; the DNS tab, the
+"Local DNS record" section in the device dialog and "Add manual device" in the UI. Tested with
+unit tests (`localdns_plan_test.go`), the real-router test `TestRealRouterOSLocalDNS`, and an
+end-to-end run against a CHR: records written and answered (A + AAAA), a hand-made record
+reported as a conflict and left alone, the record following an address change, idempotent
+re-checks, unticking a server, removing a device, removing a DNS server.
 
 ## Decisions so far (product owner)
 

@@ -267,3 +267,8 @@ dialog h3{margin:0 0 8px;font-size:18px;letter-spacing:-.01em}
 .u-pad-top{padding:16px 16px 0!important}.u-p10{padding:10px!important}.u-mr-auto{margin-right:auto!important}.u-grow{flex:1!important}
 .u-m0{margin:0!important}.u-minw140{min-width:140px!important}.u-fs13{font-size:13px!important;font-weight:500!important}
 .u-iflex{display:inline-flex!important;align-items:center!important;gap:10px!important}.u-ic13{width:13px!important;height:13px!important}
+
+/* local DNS */
+.addrlist{display:grid;gap:2px;max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+.addrlist label.inl{margin:4px 0}
+.addrlist .tag{font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:0 5px}
