@@ -64,7 +64,7 @@ type Token struct {
 type DNSAccount struct {
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
-	Provider     string            `json:"provider"`          // cloudflare | rfc2136 | acmedns (see dnsProviders)
+	Provider     string            `json:"provider"`          // cloudflare | rfc2136 | namecheap | acmedns (see dnsProviders)
 	Token        string            `json:"token,omitempty"`   // Cloudflare API token, sealed
 	Config       map[string]string `json:"config,omitempty"`  // other providers: settings that aren't secret
 	Secret       string            `json:"secret,omitempty"`  // other providers: secret settings as JSON, sealed

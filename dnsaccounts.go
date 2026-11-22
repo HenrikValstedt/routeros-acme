@@ -221,6 +221,15 @@ func dnsProviderFor(cfg Config, c Cert, sl *sealer) (challenge.Provider, []dnsRo
 		}
 		m.byName[bareName(r.Name)] = p
 	}
+	// wait as long as the slowest provider needs (e.g. Namecheap takes minutes)
+	for _, p := range perAccount {
+		if t, ok := p.(challenge.ProviderTimeout); ok {
+			timeout, poll := t.Timeout()
+			if timeout > m.timeout {
+				m.timeout, m.poll = timeout, max(m.poll, poll)
+			}
+		}
+	}
 	var seq time.Duration
 	isSeq := false
 	for _, p := range perAccount {

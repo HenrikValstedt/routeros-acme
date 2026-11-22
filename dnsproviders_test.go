@@ -8,7 +8,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/go-acme/lego/v4/challenge"
 	"github.com/go-acme/lego/v4/challenge/dns01"
 )
 
@@ -150,5 +152,57 @@ func TestNormalizeZones(t *testing.T) {
 		if _, err := normalizeZones([]string{bad}); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+func TestNamecheapAccount(t *testing.T) {
+	a, srv := newTestApp(t)
+	admin := newClient(t, srv)
+	admin.expect(200, "POST", "/api/setup", map[string]string{"code": a.setupCode, "username": "boss", "password": "supersecret"})
+	admin.turnOn2FA()
+
+	nc := func(cfg, sec map[string]string, zones ...string) map[string]any {
+		return map[string]any{"provider": "namecheap", "config": cfg, "secrets": sec, "zones": zones}
+	}
+	key := map[string]string{"apiKey": "0123456789abcdef0123456789abcdef"}
+	user := map[string]string{"apiUser": "someone"}
+	admin.expect(400, "POST", "/api/dns-accounts", nc(map[string]string{}, key, "example.test"))                                                // no user
+	admin.expect(400, "POST", "/api/dns-accounts", nc(user, map[string]string{}, "example.test"))                                               // no key
+	admin.expect(400, "POST", "/api/dns-accounts", nc(user, map[string]string{"apiKey": "short!"}, "example.test"))                             // bad key
+	admin.expect(400, "POST", "/api/dns-accounts", nc(map[string]string{"apiUser": "someone", "clientIP": "2001:db8::1"}, key, "example.test")) // not IPv4
+	admin.expect(400, "POST", "/api/dns-accounts", nc(user, key))                                                                               // no zones
+	admin.expect(200, "POST", "/api/dns-accounts", nc(map[string]string{"apiUser": "someone", "clientIP": "192.0.2.10"}, key, "example.test"))
+
+	acc := a.store.Snapshot().DNS[0]
+	if acc.Provider != "namecheap" || acc.Config["clientIP"] != "192.0.2.10" || !isSealed(acc.Secret) || strings.Contains(acc.Secret, key["apiKey"]) {
+		t.Fatalf("%+v", acc)
+	}
+	raw := admin.expect(200, "GET", "/api/state", nil)
+	if strings.Contains(raw, key["apiKey"]) {
+		t.Fatal("API key sent to the browser")
+	}
+
+	var got [3]string
+	orig := newNamecheap
+	t.Cleanup(func() { newNamecheap = orig })
+	newNamecheap = func(u, k, ip string) (challenge.Provider, error) {
+		got = [3]string{u, k, ip}
+		return orig(u, k, ip) // the IP is given, so nothing is looked up
+	}
+	if p, err := newProvider(acc, a.mgr.sealer); err != nil || p == nil {
+		t.Fatal(err)
+	}
+	if got != [3]string{"someone", key["apiKey"], "192.0.2.10"} {
+		t.Fatal(got)
+	}
+
+	// certificates in its zone wait as long as Namecheap needs
+	admin.expect(200, "POST", "/api/certs", map[string]any{"name": "nc", "domains": []string{"*.example.test"}})
+	p, _, err := dnsProviderFor(a.store.Snapshot(), *a.store.Snapshot().Certs[0], a.mgr.sealer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if to, _ := p.(challenge.ProviderTimeout).Timeout(); to != 10*time.Minute {
+		t.Fatal("timeout", to)
 	}
 }

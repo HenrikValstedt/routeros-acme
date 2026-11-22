@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-acme/lego/v4/challenge"
 	"github.com/go-acme/lego/v4/challenge/dns01"
+	"github.com/go-acme/lego/v4/providers/dns/namecheap"
 	"github.com/go-acme/lego/v4/providers/dns/rfc2136"
 	"github.com/miekg/dns"
 )
@@ -25,6 +26,7 @@ import (
 //   - cloudflare: API token; the zones are read from Cloudflare.
 //   - rfc2136:    dynamic updates to your own DNS server (BIND, PowerDNS, Knot,
 //     Technitium, Windows DNS, …), usually signed with a TSIG key.
+//   - namecheap:  Namecheap API (API user + key, the calling IP must be whitelisted).
 //   - acmedns:    CNAME delegation to an acme-dns server. Works with any DNS host,
 //     even without an API: one CNAME record per name, created once.
 //
@@ -50,6 +52,11 @@ type providerDef struct {
 
 var hostnameRE = regexp.MustCompile(`^(?i)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\.?$`)
 
+var (
+	namecheapUserRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+	namecheapKeyRE  = regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`)
+)
+
 var tsigAlgorithms = []string{"hmac-sha256", "hmac-sha512", "hmac-sha384", "hmac-sha224", "hmac-sha1"}
 
 var dnsProviders = []providerDef{
@@ -71,6 +78,20 @@ the <code>_acme-challenge</code> TXT records with dynamic updates. The server mu
 			{Key: "tsigKey", Label: "TSIG key name", Placeholder: "acme-update", Hint: "Leave empty only if the server accepts unsigned updates from this address."},
 			{Key: "tsigAlgorithm", Label: "TSIG algorithm", Options: tsigAlgorithms, Default: "hmac-sha256"},
 			{Key: "tsigSecret", Label: "TSIG secret", Secret: true, Placeholder: "base64, from tsig-keygen or keymgr"},
+		},
+	},
+	{
+		ID: "namecheap", Name: "Namecheap",
+		Help: `For domains that use Namecheap's DNS (<b>BasicDNS</b> or <b>PremiumDNS</b>). In Namecheap: <b>Profile → Tools → Business &amp; Dev Tools →
+Namecheap API Access</b>, turn the API <b>on</b> and add the <b>public IPv4 address</b> this app connects from under <b>Whitelisted IPs</b>.
+Namecheap only grants API access to accounts that meet its requirements (for example 20+ domains or $50 balance or spending).
+Note: Namecheap's API can only replace a domain's whole record list, so the app reads all records, adds or removes the
+<code>_acme-challenge</code> TXT record and writes them back. New records can take a few minutes to appear.`,
+		Fields: []providerField{
+			{Key: "apiUser", Label: "API user", Placeholder: "your Namecheap username", Required: true},
+			{Key: "apiKey", Label: "API key", Secret: true, Required: true},
+			{Key: "clientIP", Label: "Whitelisted IP", Placeholder: "detected automatically",
+				Hint: "The public IPv4 address whitelisted at Namecheap. Leave empty to detect it on each use."},
 		},
 	},
 	{
@@ -136,10 +157,22 @@ func newProvider(a *DNSAccount, sl *sealer) (challenge.Provider, error) {
 		cfg.PropagationTimeout, cfg.PollingInterval = 2*time.Minute, 2*time.Second
 		cfg.SequenceInterval = 5 * time.Second // one name at a time (lego's default waits a minute between them)
 		return rfc2136.NewDNSProviderConfig(cfg)
+	case "namecheap":
+		return newNamecheap(a.Config["apiUser"], sec["apiKey"], a.Config["clientIP"])
 	case "acmedns":
 		return newACMEDNSProvider(a, sl)
 	}
 	return nil, fmt.Errorf("unknown DNS provider %q", a.Provider)
+}
+
+// newNamecheap is replaceable in tests. An empty clientIP is detected with Namecheap's own
+// "what is my IP" service, as lego does.
+var newNamecheap = func(user, key, clientIP string) (challenge.Provider, error) {
+	cfg := namecheap.NewDefaultConfig()
+	cfg.APIUser, cfg.APIKey, cfg.ClientIP = user, key, clientIP
+	// Namecheap usually serves new records within a few minutes; lego's default waits up to an hour
+	cfg.PropagationTimeout, cfg.PollingInterval = 10*time.Minute, 10*time.Second
+	return namecheap.NewDNSProviderConfig(cfg)
 }
 
 // normalizeZones checks typed-in zones: "Example.com." -> "example.com".
@@ -189,6 +222,18 @@ func validateConfig(provider string, cfg, sec map[string]string, hasSecret func(
 		if s := sec["tsigSecret"]; s != "" {
 			if _, err := base64.StdEncoding.DecodeString(s); err != nil {
 				return errors.New("the TSIG secret must be base64, as printed by tsig-keygen or keymgr")
+			}
+		}
+	case "namecheap":
+		if !namecheapUserRE.MatchString(cfg["apiUser"]) {
+			return errors.New("enter your Namecheap username as the API user")
+		}
+		if k := sec["apiKey"]; k != "" && !namecheapKeyRE.MatchString(k) {
+			return errors.New("the API key looks wrong: copy it from Namecheap → Profile → Tools → Namecheap API Access")
+		}
+		if ip := cfg["clientIP"]; ip != "" {
+			if p := net.ParseIP(ip); p == nil || p.To4() == nil {
+				return errors.New("enter the whitelisted IP as an IPv4 address, or leave it empty to detect it")
 			}
 		}
 	case "acmedns":
@@ -281,7 +326,11 @@ func (m *Manager) testAccount(id string) dnsTestResult {
 	}
 	seen, err := waitForTXT(info.EffectiveFQDN, info.Value, servers, 40*time.Second)
 	if err != nil {
-		return dnsTestResult{Message: fmt.Sprintf("created a test record in %s, but %s", zone, err)}
+		msg := fmt.Sprintf("created a test record in %s, but %s", zone, err)
+		if a.Provider == "namecheap" {
+			msg += ". Namecheap can take several minutes to publish a record: the credentials work, and renewals wait up to 10 minutes"
+		}
+		return dnsTestResult{Message: msg}
 	}
 	m.logf("DNS account %q: test record in %s served by %s after %s", a.Name, zone, seen, time.Since(start).Round(time.Second))
 	return dnsTestResult{OK: true, Message: fmt.Sprintf("Created a test record in %s, %s served it after %s, and it was removed again.",
