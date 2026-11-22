@@ -10,7 +10,7 @@ and is inspired by that project (see [Credits](#credits)).
 - One small container (a static Go binary in a `scratch` image, about 17 MB) manages **many routers**.
 - **Device enrollment**: an admin login is used once, to set up a restricted service account. After that all
   communication goes over the encrypted RouterOS API (api-ssl) with certificate pinning. No admin credentials are stored.
-- DNS-01 validation through **Cloudflare**, **your own DNS server** (RFC 2136) or **acme-dns** (works with any DNS host),
+- DNS-01 validation through **Cloudflare**, **Namecheap**, **your own DNS server** (RFC 2136) or **acme-dns** (works with any DNS host),
   so wildcards work and nothing has to be exposed to the internet.
 - Certificates and routers are configured separately. One cert (e.g. `*.example.com`) can go to several routers and is issued only once.
 - Runs on `linux/amd64`, `linux/arm64` and `linux/arm/v7` (Raspberry Pi etc).
@@ -114,11 +114,12 @@ Secrets (DNS credentials, SMTP password, router passwords and keys) are stored e
 ## DNS accounts
 
 Let's Encrypt checks domain ownership with a temporary DNS record, so the app needs a way to create TXT records for
-each zone. Add DNS accounts under **Settings → DNS accounts**. Three providers are available, all verified end to end:
+each zone. Add DNS accounts under **Settings → DNS accounts**. Four providers are available:
 
 | Provider | For | What you enter |
 |---|---|---|
 | **Cloudflare** | Domains at Cloudflare | An API token (*My Profile → API Tokens*, "Edit zone DNS" template: Zone:Read + DNS:Edit). The app reads its zones from Cloudflare. |
+| **Namecheap** | Domains using Namecheap BasicDNS / PremiumDNS | Your Namecheap username and API key (*Profile → Tools → Namecheap API Access*), and the zones. The public IPv4 address of the app must be whitelisted there; it is detected automatically unless you enter it |
 | **Own DNS server (RFC 2136)** | BIND, PowerDNS, Knot, Technitium, Windows DNS and others you run yourself | The server, a TSIG key (name, algorithm, secret) and the zones |
 | **acme-dns (CNAME)** | **Any DNS host**, also one without an API | An [acme-dns](https://github.com/joohoi/acme-dns) server (your own, or the public `https://auth.acme-dns.io`) and the zones |
 
@@ -137,6 +138,13 @@ How it works for every provider:
 **Cloudflare.** Use several accounts when your domains live in different Cloudflare accounts, or for one narrowly
 scoped token per zone. The token is checked when you save it, and its zone list is refreshed daily or with **Refresh**.
 Upgrading from 1.1 or earlier: the single token from Settings becomes the DNS account "Cloudflare" automatically.
+
+**Namecheap.** Turn on API access under *Profile → Tools → Business & Dev Tools → Namecheap API Access* (Namecheap
+only allows this for accounts that meet its requirements, e.g. 20+ domains or $50 balance/spending) and add the public
+IPv4 address the container connects from under *Whitelisted IPs*. Namecheap's API can only replace the full record list
+of a domain, so the app reads all records, adds or removes the `_acme-challenge` TXT record and writes the list back.
+New records can take a few minutes to show up: renewals wait up to 10 minutes, and **Test** (which waits 40 seconds)
+may report that the record isn't served yet even though the credentials work.
 
 **Own DNS server (RFC 2136).** The server must be the public, authoritative server for the zones (or their hidden
 primary), because Let's Encrypt checks the records from the internet. Create a TSIG key and allow it to update only
